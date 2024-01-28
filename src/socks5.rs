@@ -1,23 +1,22 @@
 #![allow(dead_code)]
 
-use std::clone;
-use std::error::Error;
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::{Arc, Mutex};
 use tokio::io::{
     self, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf,
 };
 use tokio::net::{TcpListener, TcpStream};
 
-
-enum AddressType{
+enum AddressType {
     IPv4 = 0x01,
     DomainName = 0x03,
     IPv6 = 0x04,
 }
 
 #[derive(PartialEq)]
-pub enum AuthMethods{
+pub enum AuthMethods {
     NoAuth = 0,
     GsSAPI = 1,
     UsernamePassword = 2,
@@ -26,10 +25,7 @@ pub enum AuthMethods{
     NotAcceptable = 0xff,
 }
 
-
-
-
-impl  AuthMethods {
+impl AuthMethods {
     fn from(value: u8) -> AuthMethods {
         match value {
             0 => AuthMethods::NoAuth,
@@ -46,24 +42,34 @@ impl  AuthMethods {
         match self {
             AuthMethods::NoAuth => AuthMethods::NoAuth,
             AuthMethods::GsSAPI => AuthMethods::GsSAPI,
-            AuthMethods::UsernamePassword => AuthMethods::UsernamePassword,
+            AuthMethods::UsernamePassword => {
+                AuthMethods::UsernamePassword
+            }
             AuthMethods::IANAAssigned => AuthMethods::IANAAssigned,
             AuthMethods::Reserved => AuthMethods::Reserved,
             AuthMethods::NotAcceptable => AuthMethods::NotAcceptable,
         }
     }
+
+    fn to_u8(&self) -> u8 {
+        match self {
+            AuthMethods::NoAuth => 0,
+            AuthMethods::GsSAPI => 1,
+            AuthMethods::UsernamePassword => 2,
+            AuthMethods::IANAAssigned => 3,
+            AuthMethods::Reserved => 4,
+            AuthMethods::NotAcceptable => 0xff,
+        }
+    }
 }
 
-
-pub struct  Proxy{
+pub struct Proxy {
     auth_methods: Vec<AuthMethods>,
-    users: Mutex<HashMap<String,String>>,
+    users: Mutex<HashMap<String, String>>,
 }
 
 impl Proxy {
-    
-
-    pub fn new(auth_methods:Vec<AuthMethods>) -> Proxy {
+    pub fn new(auth_methods: Vec<AuthMethods>) -> Proxy {
         Proxy {
             auth_methods,
             users: Mutex::new(HashMap::new()),
@@ -83,23 +89,13 @@ impl Proxy {
         self.users.lock().unwrap().get(&username).cloned()
     }
 
-    
-    pub fn check_valid_auth_method(&self, auth_method: &AuthMethods) -> bool {
-        return  self.auth_methods.contains(auth_method);
+    pub fn check_valid_auth_method(
+        &self,
+        auth_method: &AuthMethods,
+    ) -> bool {
+        return self.auth_methods.contains(auth_method);
     }
-
-
-
-
-
 }
-
-
-
-
-
-
-
 
 async fn bidirectional_streaming(
     mut reader: ReadHalf<TcpStream>,
@@ -119,17 +115,11 @@ async fn bidirectional_streaming(
     }
 }
 
-async fn read_address(buf: &[u8]) -> Result<(String,),  Box<dyn Error>>{
-
-
-
+async fn read_address(
+    buf: &[u8],
+) -> Result<(String,), Box<dyn Error>> {
     Ok((String::from(""),))
 }
-
-
-
-
-
 
 pub fn check_valid_version(version: &u8) -> bool {
     // Check if version is 5
@@ -155,26 +145,162 @@ pub async fn start_proxy(
         let (socket, _) = listener.accept().await?;
         let copy = proxy.clone();
         tokio::spawn(async move {
-            handle_connection(copy,socket).await;
+            handle_connection(copy, socket).await;
         });
     }
 }
 
-
-async fn handle_connection( proxy: Arc<Proxy>, mut socket: TcpStream) {
+async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
     let mut buf: [u8; 258] = [0; 258];
 
-    
     match socket.read(&mut buf).await {
         Ok(n) => {
-           
-            if !check_valid_version(&buf[0]){
+            if !check_valid_version(&buf[0]) {
                 println!("Not socks5 version");
                 return;
             }
 
+            // Auth Checking
+            let nmethod: u8 = buf[1];
 
-            handle_auth(proxy,&buf, socket).await;
+            let methods = &buf[2..(2 + nmethod as usize)];
+
+            // Server has two auth methods
+            // UsernamePassword and NoAuth
+            // usernamePassword  is most priority
+            // check first if usernamePassword is available
+            if (methods
+                .contains(&AuthMethods::UsernamePassword.to_u8())
+                && proxy.check_valid_auth_method(
+                    &AuthMethods::UsernamePassword,
+                ))
+            {
+                println!("UsernamePassword");
+
+                // Write
+                match socket
+                    .write(&[
+                        5,                                     // Version
+                        AuthMethods::UsernamePassword.to_u8(), // UsernamePassword
+                    ])
+                    .await
+                {
+                    Ok(n) => {}
+                    Err(e) => {
+                        println!("Error sending response");
+                        return;
+                    }
+                }
+
+                // Read UsernamePassword
+                let mut buf: [u8; 258] = [0; 258];
+
+                match socket.read(&mut buf).await {
+                    Ok(n) => {
+                        println!("UsernamePassword: {:?}", buf);
+
+                        let username_length = buf[1];
+                        let password_length =
+                            buf[2 + username_length as usize];
+
+                        let username =
+                            &buf[2..(2 + username_length as usize)];
+                        let password = &buf[(3 + username_length
+                            as usize)
+                            ..(3 + username_length as usize
+                                + password_length as usize)];
+
+                        let username =
+                            String::from_utf8(username.to_vec())
+                                .unwrap();
+                        let password =
+                            String::from_utf8(password.to_vec())
+                                .unwrap();
+
+                        println!("Username: {:?}", username);
+                        println!("Password: {:?}", password);
+
+                        match proxy.get_user(username.clone()) {
+                            Some(_password) => {
+                                println!("User is valid");
+
+                                if _password == password {
+                                    // Write
+                                    match socket
+                                        .write(&[
+                                            1, // Version
+                                            0, // Succeeded
+                                        ])
+                                        .await
+                                    {
+                                        Ok(n) => {
+                                            println!(
+                                                "ACK Response sent"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            println!("Error sending response");
+                                        }
+                                    }
+
+                                    make_proxy(socket).await;
+                                } else {
+                                    match socket
+                                        .write(&[
+                                            1, // Version
+                                            1, // Failed
+                                        ])
+                                        .await
+                                    {
+                                        Ok(n) => {
+                                            println!(
+                                                "ACK Response sent"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            println!(
+                                            "Error sending response"
+                                        );
+                                        }
+                                    }
+                                    return;
+                                }
+                            }
+                            None => {
+                                println!("User is not valid");
+
+                                // Write
+                                match socket
+                                    .write(&[
+                                        1, // Version
+                                        1, // Failed
+                                    ])
+                                    .await
+                                {
+                                    Ok(n) => {
+                                        println!("ACK Response sent");
+                                    }
+                                    Err(e) => {
+                                        println!(
+                                            "Error sending response"
+                                        );
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Error reading from socket: {}", e);
+                    }
+                }
+            } else if (methods
+                .contains(&&AuthMethods::NoAuth.to_u8()))
+            {
+                println!("NoAuth");
+            } else {
+                println!("NotAcceptable");
+            }
         }
         Err(e) => {
             println!("Error reading from socket: {}", e);
@@ -182,8 +308,11 @@ async fn handle_connection( proxy: Arc<Proxy>, mut socket: TcpStream) {
     }
 }
 
-
-async fn handle_auth(proxy: Arc<Proxy>,buf: &[u8], mut socket: TcpStream) {
+async fn handle_auth(
+    proxy: Arc<Proxy>,
+    buf: &[u8],
+    mut socket: TcpStream,
+) {
     let nmethod: u8 = buf[1];
     let nmethod_usize = nmethod as usize;
 
@@ -192,14 +321,12 @@ async fn handle_auth(proxy: Arc<Proxy>,buf: &[u8], mut socket: TcpStream) {
     println!("nMethod: {:?}", nmethod);
     println!("auth: {:?}", methods);
 
-    
     let noAuth = 0x00;
     let gssapi = 0x01;
     let usernamePassword = 0x02;
     let ianaAssigned = 0x03;
     let reserved = 0x04;
     let notAcceptable = 0xff;
-
 
     if methods.contains(&noAuth) {
         println!("No auth");
@@ -217,28 +344,18 @@ async fn handle_auth(proxy: Arc<Proxy>,buf: &[u8], mut socket: TcpStream) {
             }
             Err(e) => {}
         }
-    }
-    else if methods.contains(&gssapi) {
+    } else if methods.contains(&gssapi) {
         println!("GSSAPI");
-    }
-    else if methods.contains(&usernamePassword) {
+    } else if methods.contains(&usernamePassword) {
         println!("UsernamePassword");
-    }
-    else if methods.contains(&ianaAssigned) {
+    } else if methods.contains(&ianaAssigned) {
         println!("IANAAssigned");
-    }
-    else if methods.contains(&reserved) {
+    } else if methods.contains(&reserved) {
         println!("Reserved");
-    }
-    else  {
+    } else {
         println!("NotAcceptable");
     }
-
-
-    
 }
-
-
 
 /**
  *
@@ -261,9 +378,6 @@ async fn make_proxy(mut socket: TcpStream) {
 
             let method = request[1];
             let address_type = request[3];
-
-
-
 
             if address_type == 1 {
                 println!("IPv4");
