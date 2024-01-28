@@ -318,6 +318,17 @@ async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
 
             } else {
                 println!("NotAcceptable");
+
+                // Send NotAcceptable repl
+                match  socket.write(&[5, 0xff]).await {
+                    Ok(n) => {
+                        println!("ACK Response sent");
+                    }
+                    Err(e) => {
+                        println!("Error sending response");
+                    }
+                    
+                }
             }
         }
         Err(e) => {
