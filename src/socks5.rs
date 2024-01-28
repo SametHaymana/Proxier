@@ -308,54 +308,7 @@ async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
     }
 }
 
-async fn handle_auth(
-    proxy: Arc<Proxy>,
-    buf: &[u8],
-    mut socket: TcpStream,
-) {
-    let nmethod: u8 = buf[1];
-    let nmethod_usize = nmethod as usize;
 
-    let methods = &buf[2..(2 + nmethod_usize)];
-
-    println!("nMethod: {:?}", nmethod);
-    println!("auth: {:?}", methods);
-
-    let noAuth = 0x00;
-    let gssapi = 0x01;
-    let usernamePassword = 0x02;
-    let ianaAssigned = 0x03;
-    let reserved = 0x04;
-    let notAcceptable = 0xff;
-
-    if methods.contains(&noAuth) {
-        println!("No auth");
-
-        // Write
-        match socket
-            .write(&[
-                5, // Version
-                0, // No auth Required
-            ])
-            .await
-        {
-            Ok(n) => {
-                make_proxy(socket).await;
-            }
-            Err(e) => {}
-        }
-    } else if methods.contains(&gssapi) {
-        println!("GSSAPI");
-    } else if methods.contains(&usernamePassword) {
-        println!("UsernamePassword");
-    } else if methods.contains(&ianaAssigned) {
-        println!("IANAAssigned");
-    } else if methods.contains(&reserved) {
-        println!("Reserved");
-    } else {
-        println!("NotAcceptable");
-    }
-}
 
 /**
  *
