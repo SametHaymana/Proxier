@@ -295,9 +295,27 @@ async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
                     }
                 }
             } else if (methods
-                .contains(&&AuthMethods::NoAuth.to_u8()))
+                .contains(&&AuthMethods::NoAuth.to_u8())) 
+                && 
+                proxy.check_valid_auth_method(
+                    &AuthMethods::NoAuth,
+                )
             {
                 println!("NoAuth");
+
+                // Send Accept repl
+
+                match socket.write(&[5, 0]).await {
+                    Ok(n) => {
+                        println!("ACK Response sent");
+                    }
+                    Err(e) => {
+                        println!("Error sending response");
+                    }
+                }
+
+                make_proxy(socket).await;
+
             } else {
                 println!("NotAcceptable");
             }
