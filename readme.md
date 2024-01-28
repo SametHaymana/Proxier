@@ -38,7 +38,7 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduc
 
 ## Authors
 
-- **Abdulsamet Haymana** - _Initial work_ - [SametHaymana](https://github.com/sametHaymana)
+- **Abdulsamet Haymana** - Proxier - [SametHaymana](https://github.com/sametHaymana)
 
 See also the list of [contributors](https://github.com/SametHaymana/Proxier/contributors) who participated in this project.
 
