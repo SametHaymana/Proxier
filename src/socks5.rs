@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -113,12 +110,6 @@ async fn bidirectional_streaming(
             Err(_) => break, // Error reading
         }
     }
-}
-
-async fn read_address(
-    buf: &[u8],
-) -> Result<(String,), Box<dyn Error>> {
-    Ok((String::from(""),))
 }
 
 pub fn check_valid_version(version: &u8) -> bool {
@@ -295,11 +286,8 @@ async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
                     }
                 }
             } else if (methods
-                .contains(&&AuthMethods::NoAuth.to_u8())) 
-                && 
-                proxy.check_valid_auth_method(
-                    &AuthMethods::NoAuth,
-                )
+                .contains(&&AuthMethods::NoAuth.to_u8()))
+                && proxy.check_valid_auth_method(&AuthMethods::NoAuth)
             {
                 println!("NoAuth");
 
@@ -315,19 +303,17 @@ async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
                 }
 
                 make_proxy(socket).await;
-
             } else {
                 println!("NotAcceptable");
 
                 // Send NotAcceptable repl
-                match  socket.write(&[5, 0xff]).await {
+                match socket.write(&[5, 0xff]).await {
                     Ok(n) => {
                         println!("ACK Response sent");
                     }
                     Err(e) => {
                         println!("Error sending response");
                     }
-                    
                 }
             }
         }
@@ -358,12 +344,11 @@ async fn make_proxy(mut socket: TcpStream) {
                 return;
             }
 
-            let method = request[1];
+            let command = request[1];
             let address_type = request[3];
 
             if address_type == 1 {
                 println!("IPv4");
-
                 // Read 4 bytes For address and 2 bytes for port
                 let mut address: [u8; 6] = [0; 6];
 
@@ -437,7 +422,76 @@ async fn make_proxy(mut socket: TcpStream) {
                         println!("Error reading from socket: {}", e);
                     }
                 }
+            } else if address_type == 4 {
+                println!("DomainName");
+
+                // Read 1 byte for domain name length
+                let mut domain_name_length: [u8; 1] = [0; 1];
+
+                match  socket.read(&mut domain_name_length).await {
+                    Ok(_n) =>{
+
+                        let domain_name_length = domain_name_length[0];
+
+                        // Read domain name
+                        let mut domain_name: Vec<u8> = vec![0; domain_name_length as usize];
+
+                        match socket.read(&mut domain_name).await {
+                            Ok(_n) => {
+                                let domain_name = String::from_utf8(domain_name).unwrap();
+                                println!("Domain Name: {}", domain_name);
+
+                                // Read 2 bytes for port
+                                let mut port: [u8; 2] = [0; 2];
+
+                                match socket.read(&mut port).await {
+                                    Ok(_n) => {
+                                        let port = u16::from_be_bytes([port[0], port[1]]);
+                                        println!("Port: {}", port);
+
+                                        // Connect to the server
+                                        let mut server_socket = TcpStream::connect(format!("{}:{}", domain_name, port)).await.unwrap();
+
+                                        // Write response
+                                        match socket.write(&[5, 0, 0, 3, domain_name_length, domain_name.as_bytes().to_vec().as_slice()[0], domain_name.as_bytes().to_vec().as_slice()[1], domain_name.as_bytes().to_vec().as_slice()[2], domain_name.as_bytes().to_vec().as_slice()[3], port.to_be_bytes()[0], port.to_be_bytes()[1]]).await {
+                                            Ok(n) => {
+                                                println!("ACK Response sent");
+                                            }
+                                            Err(e) => {
+                                                println!("Error sending response");
+                                            }
+                                        }
+
+                                        // In your main function or where you set up the connections
+                                        let (client_reader, client_writer) = io::split(socket);
+                                        let (server_reader, server_writer) = io::split(server_socket);
+
+                                        let client_to_server = tokio::spawn(bidirectional_streaming(client_reader, server_writer));
+                                        let server_to_client = tokio::spawn(bidirectional_streaming(server_reader, client_writer));
+
+                                        let _ = tokio::try_join!(client_to_server, server_to_client);
+                                    },
+                                    Err(e) => {
+                                        println!("Error reading from socket: {}", e);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!("Error reading from socket: {}", e);
+                            }
+                        }
+
+                    },
+                    Err(_e) => {
+                        println!("Error reading from socket: {}", _e);
+                    }
+                }
+
+            } else if address_type == 4 {
+                println!("IPv6");
             }
+
+            return;
         }
         Err(e) => {
             println!("")
