@@ -1,9 +1,15 @@
 #![allow(dead_code)]
 
 mod socks5;
+mod proxy;
 
+use crate::socks5::libs::statics::AuthMethods;
+use crate::proxy::Proxy;
+use socks5::handlers;
 use std::{error::Error, sync::Arc};
 use tokio;
+
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -12,19 +18,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::spawn(async move {
         // new vec of auth methods
-        let mut authTypes: Vec<socks5::AuthMethods> = Vec::new();
+        let mut auth_types: Vec<AuthMethods> = Vec::new();
 
         // add auth methods
-        authTypes.push(socks5::AuthMethods::NoAuth);
-        authTypes.push(socks5::AuthMethods::UsernamePassword);
+        auth_types.push(AuthMethods::NoAuth);
+        auth_types.push(AuthMethods::UsernamePassword);
 
-        let mut proxy: socks5::Proxy = socks5::Proxy::new(authTypes);
+        let mut proxy: Proxy = proxy::Proxy::new(auth_types);
 
         // Create defoult user and password
         proxy.add_user(String::from("user"), String::from("pass"));
 
         // Create a new Tokio runtime
-        match socks5::start_proxy(
+        match handlers::start_proxy(
             Arc::new(proxy),
             Some(server_addr),
             Some(server_port),
@@ -41,7 +47,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // Lock
-    while true {}
+    loop {}
 
-    Ok(())
 }

@@ -1,116 +1,13 @@
-use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io::{
-    self, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf,
+    self, AsyncReadExt, AsyncWriteExt 
 };
 use tokio::net::{TcpListener, TcpStream};
 
-enum AddressType {
-    IPv4 = 0x01,
-    DomainName = 0x03,
-    IPv6 = 0x04,
-}
-
-#[derive(PartialEq)]
-pub enum AuthMethods {
-    NoAuth = 0,
-    GsSAPI = 1,
-    UsernamePassword = 2,
-    IANAAssigned = 3,
-    Reserved = 4,
-    NotAcceptable = 0xff,
-}
-
-impl AuthMethods {
-    fn from(value: u8) -> AuthMethods {
-        match value {
-            0 => AuthMethods::NoAuth,
-            1 => AuthMethods::GsSAPI,
-            2 => AuthMethods::UsernamePassword,
-            3 => AuthMethods::IANAAssigned,
-            4 => AuthMethods::Reserved,
-            0xff => AuthMethods::NotAcceptable,
-            _ => panic!("Invalid value"),
-        }
-    }
-
-    fn clone(&self) -> AuthMethods {
-        match self {
-            AuthMethods::NoAuth => AuthMethods::NoAuth,
-            AuthMethods::GsSAPI => AuthMethods::GsSAPI,
-            AuthMethods::UsernamePassword => {
-                AuthMethods::UsernamePassword
-            }
-            AuthMethods::IANAAssigned => AuthMethods::IANAAssigned,
-            AuthMethods::Reserved => AuthMethods::Reserved,
-            AuthMethods::NotAcceptable => AuthMethods::NotAcceptable,
-        }
-    }
-
-    fn to_u8(&self) -> u8 {
-        match self {
-            AuthMethods::NoAuth => 0,
-            AuthMethods::GsSAPI => 1,
-            AuthMethods::UsernamePassword => 2,
-            AuthMethods::IANAAssigned => 3,
-            AuthMethods::Reserved => 4,
-            AuthMethods::NotAcceptable => 0xff,
-        }
-    }
-}
-
-pub struct Proxy {
-    auth_methods: Vec<AuthMethods>,
-    users: Mutex<HashMap<String, String>>,
-}
-
-impl Proxy {
-    pub fn new(auth_methods: Vec<AuthMethods>) -> Proxy {
-        Proxy {
-            auth_methods,
-            users: Mutex::new(HashMap::new()),
-        }
-    }
-
-    // User operations
-    pub fn add_user(&mut self, username: String, password: String) {
-        self.users.lock().unwrap().insert(username, password);
-    }
-
-    pub fn remove_user(&mut self, username: String) {
-        self.users.lock().unwrap().remove(&username);
-    }
-
-    pub fn get_user(&self, username: String) -> Option<String> {
-        self.users.lock().unwrap().get(&username).cloned()
-    }
-
-    pub fn check_valid_auth_method(
-        &self,
-        auth_method: &AuthMethods,
-    ) -> bool {
-        return self.auth_methods.contains(auth_method);
-    }
-}
-
-async fn bidirectional_streaming(
-    mut reader: ReadHalf<TcpStream>,
-    mut writer: WriteHalf<TcpStream>,
-) {
-    let mut buf = [0; 1024];
-    loop {
-        match reader.read(&mut buf).await {
-            Ok(0) => break, // Connection closed
-            Ok(n) => {
-                if writer.write_all(&buf[..n]).await.is_err() {
-                    break; // Error or connection closed
-                }
-            }
-            Err(_) => break, // Error reading
-        }
-    }
-}
+use crate::socks5::libs::io::bidirectional_streaming;
+use crate::proxy::Proxy;
+use crate::socks5::libs::statics::AuthMethods;
 
 pub fn check_valid_version(version: &u8) -> bool {
     // Check if version is 5
@@ -323,8 +220,6 @@ async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
     }
 }
 
-
-
 /**
  *
  * Function to proxy
@@ -428,32 +323,76 @@ async fn make_proxy(mut socket: TcpStream) {
                 // Read 1 byte for domain name length
                 let mut domain_name_length: [u8; 1] = [0; 1];
 
-                match  socket.read(&mut domain_name_length).await {
-                    Ok(_n) =>{
-
-                        let domain_name_length = domain_name_length[0];
+                match socket.read(&mut domain_name_length).await {
+                    Ok(_n) => {
+                        let domain_name_length =
+                            domain_name_length[0];
 
                         // Read domain name
-                        let mut domain_name: Vec<u8> = vec![0; domain_name_length as usize];
+                        let mut domain_name: Vec<u8> =
+                            vec![0; domain_name_length as usize];
 
                         match socket.read(&mut domain_name).await {
                             Ok(_n) => {
-                                let domain_name = String::from_utf8(domain_name).unwrap();
-                                println!("Domain Name: {}", domain_name);
+                                let domain_name =
+                                    String::from_utf8(domain_name)
+                                        .unwrap();
+                                println!(
+                                    "Domain Name: {}",
+                                    domain_name
+                                );
 
                                 // Read 2 bytes for port
                                 let mut port: [u8; 2] = [0; 2];
 
                                 match socket.read(&mut port).await {
                                     Ok(_n) => {
-                                        let port = u16::from_be_bytes([port[0], port[1]]);
+                                        let port =
+                                            u16::from_be_bytes([
+                                                port[0], port[1],
+                                            ]);
                                         println!("Port: {}", port);
 
                                         // Connect to the server
-                                        let mut server_socket = TcpStream::connect(format!("{}:{}", domain_name, port)).await.unwrap();
+                                        let mut server_socket =
+                                            TcpStream::connect(
+                                                format!(
+                                                    "{}:{}",
+                                                    domain_name, port
+                                                ),
+                                            )
+                                            .await
+                                            .unwrap();
 
                                         // Write response
-                                        match socket.write(&[5, 0, 0, 3, domain_name_length, domain_name.as_bytes().to_vec().as_slice()[0], domain_name.as_bytes().to_vec().as_slice()[1], domain_name.as_bytes().to_vec().as_slice()[2], domain_name.as_bytes().to_vec().as_slice()[3], port.to_be_bytes()[0], port.to_be_bytes()[1]]).await {
+                                        match socket
+                                            .write(&[
+                                                5,
+                                                0,
+                                                0,
+                                                3,
+                                                domain_name_length,
+                                                domain_name
+                                                    .as_bytes()
+                                                    .to_vec()
+                                                    .as_slice()[0],
+                                                domain_name
+                                                    .as_bytes()
+                                                    .to_vec()
+                                                    .as_slice()[1],
+                                                domain_name
+                                                    .as_bytes()
+                                                    .to_vec()
+                                                    .as_slice()[2],
+                                                domain_name
+                                                    .as_bytes()
+                                                    .to_vec()
+                                                    .as_slice()[3],
+                                                port.to_be_bytes()[0],
+                                                port.to_be_bytes()[1],
+                                            ])
+                                            .await
+                                        {
                                             Ok(n) => {
                                                 println!("ACK Response sent");
                                             }
@@ -463,32 +402,121 @@ async fn make_proxy(mut socket: TcpStream) {
                                         }
 
                                         // In your main function or where you set up the connections
-                                        let (client_reader, client_writer) = io::split(socket);
-                                        let (server_reader, server_writer) = io::split(server_socket);
+                                        let (
+                                            client_reader,
+                                            client_writer,
+                                        ) = io::split(socket);
+                                        let (
+                                            server_reader,
+                                            server_writer,
+                                        ) = io::split(server_socket);
 
                                         let client_to_server = tokio::spawn(bidirectional_streaming(client_reader, server_writer));
                                         let server_to_client = tokio::spawn(bidirectional_streaming(server_reader, client_writer));
 
-                                        let _ = tokio::try_join!(client_to_server, server_to_client);
-                                    },
+                                        let _ = tokio::try_join!(
+                                            client_to_server,
+                                            server_to_client
+                                        );
+                                    }
                                     Err(e) => {
                                         println!("Error reading from socket: {}", e);
                                     }
                                 }
-                            },
+                            }
                             Err(e) => {
-                                println!("Error reading from socket: {}", e);
+                                println!(
+                                    "Error reading from socket: {}",
+                                    e
+                                );
                             }
                         }
-
-                    },
+                    }
                     Err(_e) => {
                         println!("Error reading from socket: {}", _e);
                     }
                 }
-
             } else if address_type == 4 {
                 println!("IPv6");
+
+                // Read 16 bytes For address and 2 bytes for port
+                let mut address: [u8; 18] = [0; 18];
+
+                match socket.read(&mut address).await {
+                    Ok(_n) => {
+                        println!("Address: {:?}", address);
+
+                        let port = u16::from_be_bytes([
+                            address[16],
+                            address[17],
+                        ]);
+
+                        println!("Port: {}", port);
+
+                        // Connect to the server
+                        let mut server_socket =
+                            TcpStream::connect(format!(
+                                "{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                                address[0],
+                                address[1],
+                                address[2],
+                                address[3],
+                                address[4],
+                                address[5],
+                                address[6],
+                                address[7],
+                                port
+                            ))
+                            .await
+                            .unwrap();
+
+                        // Write response Ack
+                        match socket
+                            .write(&[
+                                5,
+                                0,
+                                0,
+                                4,
+                                address[0],
+                                address[1],
+                                address[2],
+                                address[3],
+                                address[4],
+                                address[5],
+                                address[6],
+                                address[7],
+                                port.to_be_bytes()[0],
+                                port.to_be_bytes()[1],
+                            ])
+                            .await
+                        {
+                            Ok(n) => {
+                                println!("ACK Response sent");
+                            }
+                            Err(e) => {
+                                println!("Error sending response");
+                            }
+                        }
+
+                        // In your main function or where you set up the connections
+                        let (client_reader, client_writer) =
+                            io::split(socket);
+                        let (server_reader, server_writer) = io::split(server_socket);
+
+                        let client_to_server = tokio::spawn(bidirectional_streaming(client_reader, server_writer));
+
+                        let server_to_client = tokio::spawn(bidirectional_streaming(server_reader, client_writer));
+
+                        let _ = tokio::try_join!(
+                            client_to_server,
+                            server_to_client
+                        );
+
+                    }
+                    Err(_e) => {
+                        println!("Error reading from socket: {}", _e);
+                    }
+                }
             }
 
             return;
