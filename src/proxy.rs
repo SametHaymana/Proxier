@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-
-
 use crate::socks5::libs::statics::AuthMethods;
 
 pub struct Proxy {
@@ -21,7 +19,6 @@ impl Proxy {
     // User operations
     pub fn add_user(&mut self, username: String, password: String) {
         self.users.lock().unwrap().insert(username, password);
-
     }
 
     pub fn remove_user(&mut self, username: String) {
