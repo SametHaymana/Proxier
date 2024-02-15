@@ -1,12 +1,10 @@
 use std::error::Error;
 use std::sync::Arc;
-use tokio::io::{
-    self, AsyncReadExt, AsyncWriteExt 
-};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::socks5::libs::io::bidirectional_streaming;
 use crate::proxy::Proxy;
+use crate::socks5::libs::io::bidirectional_streaming;
 use crate::socks5::libs::statics::AuthMethods;
 
 pub fn check_valid_version(version: &u8) -> bool {
@@ -501,17 +499,25 @@ async fn make_proxy(mut socket: TcpStream) {
                         // In your main function or where you set up the connections
                         let (client_reader, client_writer) =
                             io::split(socket);
-                        let (server_reader, server_writer) = io::split(server_socket);
+                        let (server_reader, server_writer) =
+                            io::split(server_socket);
 
-                        let client_to_server = tokio::spawn(bidirectional_streaming(client_reader, server_writer));
+                        let client_to_server =
+                            tokio::spawn(bidirectional_streaming(
+                                client_reader,
+                                server_writer,
+                            ));
 
-                        let server_to_client = tokio::spawn(bidirectional_streaming(server_reader, client_writer));
+                        let server_to_client =
+                            tokio::spawn(bidirectional_streaming(
+                                server_reader,
+                                client_writer,
+                            ));
 
                         let _ = tokio::try_join!(
                             client_to_server,
                             server_to_client
                         );
-
                     }
                     Err(_e) => {
                         println!("Error reading from socket: {}", _e);
