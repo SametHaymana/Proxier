@@ -1,15 +1,13 @@
 #![allow(dead_code)]
 
-mod socks5;
 mod proxy;
+mod socks5;
 
-use crate::socks5::libs::statics::AuthMethods;
 use crate::proxy::Proxy;
+use crate::socks5::libs::statics::AuthMethods;
 use socks5::handlers;
 use std::{error::Error, sync::Arc};
 use tokio;
-
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -48,5 +46,4 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Lock
     loop {}
-
 }
