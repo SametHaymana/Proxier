@@ -1,17 +1,11 @@
-
-pub enum Methods{
-    CONNECT = 0x01,
-    BIND = 0x02,
-    UDPAssociate = 0x03,
-}
-
+#[derive(PartialEq, Clone, Debug, Copy, Eq)]
 pub enum AddressType {
-    IPv4 = 0x01,
-    DomainName = 0x03,
-    IPv6 = 0x04,
+    IPv4 = 1,
+    DomainName = 3,
+    IPv6 = 4,
 }
 
-pub enum Address{
+pub enum Address {
     IPv4([u8; 4]),
     IPv6([u8; 16]),
 }
@@ -26,8 +20,8 @@ pub enum AuthMethods {
     NotAcceptable = 0xff,
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum Command {
+#[derive(PartialEq, Clone, Debug, Copy, Eq)]
+pub enum Commands {
     Connect = 0x01,
     Bind = 0x02,
     UDPAssociate = 0x03,
@@ -45,9 +39,13 @@ pub enum Reply {
     AddressTypeNotSupported = 0x08,
 }
 
+pub trait FromToU8 {
+    fn to_u8(&self) -> u8;
+    fn from_u8(value: u8) -> Self;
+}
 
 impl Reply {
-    pub fn create_auth_reply( status: Reply) -> [u8; 2] {
+    pub fn create_auth_reply(status: Reply) -> [u8; 2] {
         let mut reply: [u8; 2] = [0; 2];
         reply[0] = 5u8;
         reply[1] = status as u8;
@@ -55,20 +53,24 @@ impl Reply {
         reply
     }
 
-    pub fn create_connection_reply(status: Reply, address_type: AddressType, address: Address, port: u16) -> Vec<u8> {
+    pub fn create_connection_reply(
+        status: Reply,
+        address_type: AddressType,
+        address: Address,
+        port: u16,
+    ) -> Vec<u8> {
         let mut reply: Vec<u8> = Vec::new();
-        
-        match address{
-            Address::IPv4(_addr) =>{
+
+        match address {
+            Address::IPv4(_addr) => {
                 reply.push(5u8);
                 reply.push(status as u8);
                 reply.push(0u8);
                 reply.push(address_type as u8);
                 reply.extend(_addr);
                 reply.extend(&port.to_be_bytes());
-
-            },
-            Address::IPv6(_addr) =>{
+            }
+            Address::IPv6(_addr) => {
                 reply.push(5u8);
                 reply.push(status as u8);
                 reply.push(0u8);
@@ -79,16 +81,14 @@ impl Reply {
         }
         reply
     }
-
-
 }
 
-impl AuthMethods {
-    pub fn to_u8(&self) -> u8 {
+impl FromToU8 for AuthMethods {
+    fn to_u8(&self) -> u8 {
         return *self as u8;
     }
 
-    pub fn from_u8(value: u8) -> AuthMethods {
+    fn from_u8(value: u8) -> AuthMethods {
         match value {
             0 => AuthMethods::NoAuth,
             1 => AuthMethods::GsSAPI,
@@ -97,6 +97,36 @@ impl AuthMethods {
             4 => AuthMethods::Reserved,
             0xff => AuthMethods::NotAcceptable,
             _ => AuthMethods::NotAcceptable,
+        }
+    }
+}
+
+impl FromToU8 for Commands {
+    fn to_u8(&self) -> u8 {
+        return *self as u8;
+    }
+
+    fn from_u8(value: u8) -> Commands {
+        match value {
+            0x01 => Commands::Connect,
+            0x02 => Commands::Bind,
+            0x03 => Commands::UDPAssociate,
+            _ => Commands::Connect,
+        }
+    }
+}
+
+impl FromToU8 for AddressType {
+    fn to_u8(&self) -> u8 {
+        return *self as u8;
+    }
+
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0x01 => AddressType::IPv4,
+            0x03 => AddressType::DomainName,
+            0x04 => AddressType::IPv6,
+            _ => AddressType::IPv4,
         }
     }
 }
