@@ -1,11 +1,17 @@
 use std::error::Error;
+use std::net::Ipv6Addr;
 use std::sync::Arc;
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::proxy::Proxy;
-use crate::socks5::libs::io::bidirectional_streaming;
-use crate::socks5::libs::statics::AuthMethods;
+use crate::socks5::libs::io::connect_stream;
+use crate::socks5::libs::statics::{
+    AddressType, AuthMethods, Commands, FromToU8,
+};
+
+use super::libs::io::connect_remote;
+use super::libs::statics::{Address, Reply};
 
 pub fn check_valid_version(version: &u8) -> bool {
     // Check if version is 5
@@ -23,7 +29,8 @@ pub async fn start_proxy(
         server_port.unwrap_or(1080)
     ));
 
-    let listener = TcpListener::bind(proxy_addr.clone()).await?;
+    let listener =
+        TcpListener::bind(proxy_addr.clone()).await?;
 
     println!("Proxys listening on: {}", proxy_addr);
 
@@ -36,179 +43,143 @@ pub async fn start_proxy(
     }
 }
 
-async fn handle_connection(proxy: Arc<Proxy>, mut socket: TcpStream) {
+async fn handle_connection(
+    proxy: Arc<Proxy>,
+    mut socket: TcpStream,
+) {
     let mut buf: [u8; 258] = [0; 258];
 
     match socket.read(&mut buf).await {
-        Ok(n) => {
+        Ok(_n) => {
             if !check_valid_version(&buf[0]) {
-                println!("Not socks5 version");
-                return;
-            }
-
-            // Auth Checking
-            let nmethod: u8 = buf[1];
-
-            let methods = &buf[2..(2 + nmethod as usize)];
-
-            // Server has two auth methods
-            // UsernamePassword and NoAuth
-            // usernamePassword  is most priority
-            // check first if usernamePassword is available
-            if (methods
-                .contains(&AuthMethods::UsernamePassword.to_u8())
-                && proxy.check_valid_auth_method(
-                    &AuthMethods::UsernamePassword,
-                ))
-            {
-                println!("UsernamePassword");
-
-                // Write
-                match socket
-                    .write(&[
-                        5,                                     // Version
-                        AuthMethods::UsernamePassword.to_u8(), // UsernamePassword
-                    ])
+                if let Err(_e) = socket
+                    .write(&Reply::create_auth_reply(
+                        Reply::GeneralFailure,
+                    ))
                     .await
                 {
-                    Ok(n) => {}
-                    Err(e) => {
-                        println!("Error sending response");
-                        return;
-                    }
+                    panic!("Error sending response");
+                }
+            }
+
+            let methods = &buf[2..(2 + buf[1] as usize)];
+
+            // Proxy has two auth methods
+            // With UsernamePassword and NoAuth
+            // UsernamePassword is most priority
+            if methods.contains(
+                &AuthMethods::UsernamePassword.to_u8(),
+            ) && proxy.check_valid_auth_method(
+                &AuthMethods::UsernamePassword,
+            ) {
+                // Send UsernamePassword accept repl
+                if let Err(_e) = socket
+                    .write(&Reply::create_auth_reply(
+                        Reply::Succeeded,
+                    ))
+                    .await
+                {
+                    panic!("Error sending response");
                 }
 
-                // Read UsernamePassword
                 let mut buf: [u8; 258] = [0; 258];
 
                 match socket.read(&mut buf).await {
                     Ok(n) => {
-                        println!("UsernamePassword: {:?}", buf);
-
                         let username_length = buf[1];
-                        let password_length =
-                            buf[2 + username_length as usize];
+                        let password_length = buf
+                            [2 + username_length as usize];
 
-                        let username =
-                            &buf[2..(2 + username_length as usize)];
-                        let password = &buf[(3 + username_length
-                            as usize)
-                            ..(3 + username_length as usize
-                                + password_length as usize)];
+                        let username = &buf[2..(2
+                            + username_length as usize)];
+                        let password = &buf[(3
+                            + username_length as usize)
+                            ..(3 + username_length
+                                as usize
+                                + password_length
+                                    as usize)];
 
-                        let username =
-                            String::from_utf8(username.to_vec())
-                                .unwrap();
-                        let password =
-                            String::from_utf8(password.to_vec())
-                                .unwrap();
+                        let username = String::from_utf8(
+                            username.to_vec(),
+                        )
+                        .unwrap();
+                        let password = String::from_utf8(
+                            password.to_vec(),
+                        )
+                        .unwrap();
 
-                        println!("Username: {:?}", username);
-                        println!("Password: {:?}", password);
-
-                        match proxy.get_user(username.clone()) {
+                        match proxy
+                            .get_user(username.clone())
+                        {
                             Some(_password) => {
-                                println!("User is valid");
-
                                 if _password == password {
-                                    // Write
-                                    match socket
-                                        .write(&[
-                                            1, // Version
-                                            0, // Succeeded
-                                        ])
+                                    if let Err(_e) = socket
+                                        .write(&Reply::create_auth_reply(
+                                            Reply::Succeeded,
+                                        ))
                                         .await
                                     {
-                                        Ok(n) => {
-                                            println!(
-                                                "ACK Response sent"
-                                            );
-                                        }
-                                        Err(e) => {
-                                            println!("Error sending response");
-                                        }
+                                        panic!("Error sending response");
                                     }
 
-                                    make_proxy(socket).await;
+                                    make_proxy(socket)
+                                        .await;
                                 } else {
-                                    match socket
-                                        .write(&[
-                                            1, // Version
-                                            1, // Failed
-                                        ])
+                                    if let Err(_e) = socket
+                                        .write(&Reply::create_auth_reply(
+                                            Reply::GeneralFailure,
+                                        ))
                                         .await
                                     {
-                                        Ok(n) => {
-                                            println!(
-                                                "ACK Response sent"
-                                            );
-                                        }
-                                        Err(e) => {
-                                            println!(
-                                            "Error sending response"
-                                        );
-                                        }
+                                        panic!("Error sending response");
                                     }
                                     return;
                                 }
                             }
                             None => {
-                                println!("User is not valid");
-
-                                // Write
-                                match socket
-                                    .write(&[
-                                        1, // Version
-                                        1, // Failed
-                                    ])
+                                if let Err(_e) = socket
+                                    .write(&Reply::create_auth_reply(
+                                        Reply::GeneralFailure,
+                                    ))
                                     .await
                                 {
-                                    Ok(n) => {
-                                        println!("ACK Response sent");
-                                    }
-                                    Err(e) => {
-                                        println!(
-                                            "Error sending response"
-                                        );
-                                    }
+                                    panic!("Error sending response");
                                 }
                                 return;
                             }
                         }
                     }
                     Err(e) => {
-                        println!("Error reading from socket: {}", e);
+                        println!(
+                            "Error reading from socket: {}",
+                            e
+                        );
                     }
                 }
-            } else if (methods
-                .contains(&&AuthMethods::NoAuth.to_u8()))
-                && proxy.check_valid_auth_method(&AuthMethods::NoAuth)
+            } else if methods
+                .contains(&AuthMethods::NoAuth.to_u8())
+                && proxy.check_valid_auth_method(
+                    &AuthMethods::NoAuth,
+                )
             {
-                println!("NoAuth");
-
-                // Send Accept repl
-
-                match socket.write(&[5, 0]).await {
-                    Ok(n) => {
-                        println!("ACK Response sent");
-                    }
-                    Err(e) => {
-                        println!("Error sending response");
-                    }
+                if let Err(_e) = socket
+                    .write(&Reply::create_auth_reply(
+                        Reply::Succeeded,
+                    ))
+                    .await
+                {
+                    panic!("Error sending response");
                 }
 
                 make_proxy(socket).await;
             } else {
-                println!("NotAcceptable");
-
-                // Send NotAcceptable repl
-                match socket.write(&[5, 0xff]).await {
-                    Ok(n) => {
-                        println!("ACK Response sent");
-                    }
-                    Err(e) => {
-                        println!("Error sending response");
-                    }
+                if let Err(_e) = socket
+                    .write(&Reply::create_auth_reply(
+                        Reply::GeneralFailure,
+                    ))
+                    .await
+                {
+                    panic!("Error sending response");
                 }
             }
         }
@@ -237,298 +208,283 @@ async fn make_proxy(mut socket: TcpStream) {
                 return;
             }
 
-            let command = request[1];
-            let address_type = request[3];
+            let command = Commands::from_u8(request[1]);
+            let address_type =
+                AddressType::from_u8(request[3]);
 
-            if address_type == 1 {
-                println!("IPv4");
-                // Read 4 bytes For address and 2 bytes for port
-                let mut address: [u8; 6] = [0; 6];
-
-                match socket.read(&mut address).await {
-                    Ok(n) => {
-                        println!("Address: {:?}", address);
-
-                        let port = u16::from_be_bytes([
-                            address[4], address[5],
-                        ]);
-
-                        println!("Port: {}", port);
-
-                        // Connect to the server
-                        let mut server_socket =
-                            TcpStream::connect(format!(
-                                "{}.{}.{}.{}:{}",
-                                address[0],
-                                address[1],
-                                address[2],
-                                address[3],
-                                port
-                            ))
-                            .await
-                            .unwrap();
-
-                        // Write response
-                        match socket
-                            .write(&[
-                                5, // Version
-                                0, // Succeeded
-                                0, // Reserved
-                                1, // IPv4
-                                address[0], address[1], address[2],
-                                address[3], // Address
-                                address[4], address[5], // Port
-                            ])
-                            .await
-                        {
-                            Ok(n) => {
-                                println!("ACK Response sent");
-                            }
-                            Err(e) => {
-                                println!("Error sending response");
-                            }
-                        }
-
-                        // In your main function or where you set up the connections
-                        let (client_reader, client_writer) =
-                            io::split(socket);
-                        let (server_reader, server_writer) =
-                            io::split(server_socket);
-
-                        let client_to_server =
-                            tokio::spawn(bidirectional_streaming(
-                                client_reader,
-                                server_writer,
-                            ));
-                        let server_to_client =
-                            tokio::spawn(bidirectional_streaming(
-                                server_reader,
-                                client_writer,
-                            ));
-
-                        let _ = tokio::try_join!(
-                            client_to_server,
-                            server_to_client
-                        );
-                    }
-                    Err(e) => {
-                        println!("Error reading from socket: {}", e);
-                    }
+            match command {
+                Commands::Connect => {
+                    println!("Connect command");
+                    connection_handler(
+                        socket,
+                        address_type,
+                    )
+                    .await;
                 }
-            } else if address_type == 4 {
-                println!("DomainName");
-
-                // Read 1 byte for domain name length
-                let mut domain_name_length: [u8; 1] = [0; 1];
-
-                match socket.read(&mut domain_name_length).await {
-                    Ok(_n) => {
-                        let domain_name_length =
-                            domain_name_length[0];
-
-                        // Read domain name
-                        let mut domain_name: Vec<u8> =
-                            vec![0; domain_name_length as usize];
-
-                        match socket.read(&mut domain_name).await {
-                            Ok(_n) => {
-                                let domain_name =
-                                    String::from_utf8(domain_name)
-                                        .unwrap();
-                                println!(
-                                    "Domain Name: {}",
-                                    domain_name
-                                );
-
-                                // Read 2 bytes for port
-                                let mut port: [u8; 2] = [0; 2];
-
-                                match socket.read(&mut port).await {
-                                    Ok(_n) => {
-                                        let port =
-                                            u16::from_be_bytes([
-                                                port[0], port[1],
-                                            ]);
-                                        println!("Port: {}", port);
-
-                                        // Connect to the server
-                                        let mut server_socket =
-                                            TcpStream::connect(
-                                                format!(
-                                                    "{}:{}",
-                                                    domain_name, port
-                                                ),
-                                            )
-                                            .await
-                                            .unwrap();
-
-                                        // Write response
-                                        match socket
-                                            .write(&[
-                                                5,
-                                                0,
-                                                0,
-                                                3,
-                                                domain_name_length,
-                                                domain_name
-                                                    .as_bytes()
-                                                    .to_vec()
-                                                    .as_slice()[0],
-                                                domain_name
-                                                    .as_bytes()
-                                                    .to_vec()
-                                                    .as_slice()[1],
-                                                domain_name
-                                                    .as_bytes()
-                                                    .to_vec()
-                                                    .as_slice()[2],
-                                                domain_name
-                                                    .as_bytes()
-                                                    .to_vec()
-                                                    .as_slice()[3],
-                                                port.to_be_bytes()[0],
-                                                port.to_be_bytes()[1],
-                                            ])
-                                            .await
-                                        {
-                                            Ok(n) => {
-                                                println!("ACK Response sent");
-                                            }
-                                            Err(e) => {
-                                                println!("Error sending response");
-                                            }
-                                        }
-
-                                        // In your main function or where you set up the connections
-                                        let (
-                                            client_reader,
-                                            client_writer,
-                                        ) = io::split(socket);
-                                        let (
-                                            server_reader,
-                                            server_writer,
-                                        ) = io::split(server_socket);
-
-                                        let client_to_server = tokio::spawn(bidirectional_streaming(client_reader, server_writer));
-                                        let server_to_client = tokio::spawn(bidirectional_streaming(server_reader, client_writer));
-
-                                        let _ = tokio::try_join!(
-                                            client_to_server,
-                                            server_to_client
-                                        );
-                                    }
-                                    Err(e) => {
-                                        println!("Error reading from socket: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                println!(
-                                    "Error reading from socket: {}",
-                                    e
-                                );
-                            }
-                        }
-                    }
-                    Err(_e) => {
-                        println!("Error reading from socket: {}", _e);
-                    }
+                Commands::Bind => {
+                    println!("Bind command not supported");
+                    return;
                 }
-            } else if address_type == 4 {
-                println!("IPv6");
-
-                // Read 16 bytes For address and 2 bytes for port
-                let mut address: [u8; 18] = [0; 18];
-
-                match socket.read(&mut address).await {
-                    Ok(_n) => {
-                        println!("Address: {:?}", address);
-
-                        let port = u16::from_be_bytes([
-                            address[16],
-                            address[17],
-                        ]);
-
-                        println!("Port: {}", port);
-
-                        // Connect to the server
-                        let mut server_socket =
-                            TcpStream::connect(format!(
-                                "{}:{}:{}:{}:{}:{}:{}:{}:{}",
-                                address[0],
-                                address[1],
-                                address[2],
-                                address[3],
-                                address[4],
-                                address[5],
-                                address[6],
-                                address[7],
-                                port
-                            ))
-                            .await
-                            .unwrap();
-
-                        // Write response Ack
-                        match socket
-                            .write(&[
-                                5,
-                                0,
-                                0,
-                                4,
-                                address[0],
-                                address[1],
-                                address[2],
-                                address[3],
-                                address[4],
-                                address[5],
-                                address[6],
-                                address[7],
-                                port.to_be_bytes()[0],
-                                port.to_be_bytes()[1],
-                            ])
-                            .await
-                        {
-                            Ok(n) => {
-                                println!("ACK Response sent");
-                            }
-                            Err(e) => {
-                                println!("Error sending response");
-                            }
-                        }
-
-                        // In your main function or where you set up the connections
-                        let (client_reader, client_writer) =
-                            io::split(socket);
-                        let (server_reader, server_writer) =
-                            io::split(server_socket);
-
-                        let client_to_server =
-                            tokio::spawn(bidirectional_streaming(
-                                client_reader,
-                                server_writer,
-                            ));
-
-                        let server_to_client =
-                            tokio::spawn(bidirectional_streaming(
-                                server_reader,
-                                client_writer,
-                            ));
-
-                        let _ = tokio::try_join!(
-                            client_to_server,
-                            server_to_client
-                        );
-                    }
-                    Err(_e) => {
-                        println!("Error reading from socket: {}", _e);
-                    }
+                Commands::UDPAssociate => {
+                    println!("UDPAssociate command not supported");
+                    return;
                 }
             }
 
             return;
         }
         Err(e) => {
-            println!("")
+            panic!("Error reading from socket: {}", e);
+        }
+    }
+}
+
+async fn connection_handler(
+    mut socket: TcpStream,
+    address_type: AddressType,
+) {
+    match address_type {
+        AddressType::IPv4 => {
+            let mut address: [u8; 6] = [0; 6];
+            match socket.read(&mut address).await {
+                Ok(_n) => {
+                    let port = u16::from_be_bytes([
+                        address[4], address[5],
+                    ]);
+
+                    let remote = match connect_remote(
+                        format!(
+                            "{}.{}.{}.{}:{}",
+                            address[0],
+                            address[1],
+                            address[2],
+                            address[3],
+                            port
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(remote) => remote,
+                        Err(_err) => {
+                            let reply =
+                                Reply::create_connection_reply(
+                                    Reply::ConnectionRefused,
+                                    AddressType::IPv4,
+                                    Address::IPv4([0, 0, 0, 0]),
+                                    0,
+                                );
+                            if let Err(_e) =
+                                socket.write(&reply).await
+                            {
+                                panic!("Error sending response");
+                            }
+                            panic!("Error connecting to remote");
+                        }
+                    };
+
+                    if let Err(_e) = socket
+                        .write(
+                            &Reply::create_connection_reply(
+                                Reply::Succeeded,
+                                AddressType::IPv4,
+                                Address::IPv4([
+                                    address[0], address[1],
+                                    address[2], address[3],
+                                ]),
+                                port,
+                            ),
+                        )
+                        .await
+                    {
+                        panic!("Error sending response");
+                    }
+
+                    connect_stream(socket, remote).await;
+                }
+                Err(_e) => {
+                    panic!(
+                        "Error reading from socket: {}",
+                        _e
+                    );
+                }
+            }
+        }
+        AddressType::DomainName => {
+            let mut domain_name_length: [u8; 1] = [0; 1];
+
+            match socket.read(&mut domain_name_length).await
+            {
+                Ok(_n) => {
+                    let domain_name_length =
+                        domain_name_length[0];
+
+                    let mut domain_name: Vec<u8> = vec![
+                            0;
+                            domain_name_length as usize
+                        ];
+
+                    match socket
+                        .read(&mut domain_name)
+                        .await
+                    {
+                        Ok(_n) => {
+                            let domain_name =
+                                String::from_utf8(
+                                    domain_name,
+                                )
+                                .unwrap();
+                            println!(
+                                "Domain Name: {}",
+                                domain_name
+                            );
+
+                            let mut port: [u8; 2] = [0; 2];
+
+                            match socket
+                                .read(&mut port)
+                                .await
+                            {
+                                Ok(_n) => {
+                                    let port =
+                                        u16::from_be_bytes(
+                                            [
+                                                port[0],
+                                                port[1],
+                                            ],
+                                        );
+                                    println!(
+                                        "Port: {}",
+                                        port
+                                    );
+
+                                    let remote = match connect_remote(
+                                        format!(
+                                            "{}:{}",
+                                            domain_name, port
+                                        ),
+                                    )
+                                    .await
+                                    {
+                                        Ok(remote) => remote,
+                                        Err(_err) => {
+                                            let reply = Reply::create_connection_reply(Reply::ConnectionRefused, AddressType::IPv4, Address::IPv4([0, 0, 0, 0]), 0);
+                                            if let Err(_e) = socket
+                                                .write(&reply)
+                                                .await
+                                            {
+                                                panic!("Error sending response");
+                                            }
+                                            panic!("Error connecting to remote");
+                                        }
+                                    };
+
+                                    if let Err(_e) = socket.write(&Reply::create_connection_reply(Reply::Succeeded, AddressType::IPv4, Address::IPv4([0, 0, 0, 0]), 0)).await {
+                                        panic!("Error sending response");
+                                    }
+
+                                    connect_stream(
+                                        socket, remote,
+                                    )
+                                    .await;
+                                }
+                                Err(_e) => {
+                                    panic!("Error reading from socket: {}", _e);
+                                }
+                            }
+                        }
+                        Err(_e) => {
+                            panic!(
+                                "Error reading from socket: {}",
+                                _e
+                            );
+                        }
+                    }
+                }
+                Err(_e) => {
+                    panic!(
+                        "Error reading from socket: {}",
+                        _e
+                    );
+                }
+            }
+        }
+        AddressType::IPv6 => {
+            let mut address: [u8; 18] = [0; 18];
+
+            match socket.read(&mut address).await {
+                Ok(_n) => {
+                    let ipv6_addr = Ipv6Addr::from([
+                        address[0],
+                        address[1],
+                        address[2],
+                        address[3],
+                        address[4],
+                        address[5],
+                        address[6],
+                        address[7],
+                        address[8],
+                        address[9],
+                        address[10],
+                        address[11],
+                        address[12],
+                        address[13],
+                        address[14],
+                        address[15],
+                    ]);
+                    let port = u16::from_be_bytes([
+                        address[16],
+                        address[17],
+                    ]);
+
+                    let remote = match connect_remote(
+                        format!("[{}]:{}", ipv6_addr, port),
+                    )
+                    .await
+                    {
+                        Ok(remote) => remote,
+                        Err(_err) => {
+                            let reply =
+                                Reply::create_connection_reply(
+                                    Reply::ConnectionRefused,
+                                    AddressType::IPv4,
+                                    Address::IPv4([0, 0, 0, 0]),
+                                    0,
+                                );
+                            if let Err(_e) =
+                                socket.write(&reply).await
+                            {
+                                panic!("Error sending response");
+                            }
+                            panic!("Error connecting to remote");
+                        }
+                    };
+
+                    if let Err(_e) = socket
+                        .write(
+                            &Reply::create_connection_reply(
+                                Reply::Succeeded,
+                                AddressType::IPv4,
+                                Address::IPv4([
+                                    address[0], address[1],
+                                    address[2], address[3],
+                                ]),
+                                port,
+                            ),
+                        )
+                        .await
+                    {
+                        panic!("Error sending response");
+                    }
+
+                    connect_stream(socket, remote).await;
+                }
+                Err(_e) => {
+                    panic!(
+                        "Error reading from socket: {}",
+                        _e
+                    );
+                }
+            }
         }
     }
 }
