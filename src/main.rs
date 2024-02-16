@@ -22,10 +22,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         auth_types.push(AuthMethods::NoAuth);
         auth_types.push(AuthMethods::UsernamePassword);
 
-        let mut proxy: Proxy = proxy::Proxy::new(auth_types);
+        let mut proxy: Proxy =
+            proxy::Proxy::new(auth_types);
 
         // Create defoult user and password
-        proxy.add_user(String::from("user"), String::from("pass"));
+        proxy.add_user(
+            String::from("user"),
+            String::from("pass"),
+        );
 
         // Create a new Tokio runtime
         match handlers::start_proxy(
