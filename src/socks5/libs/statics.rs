@@ -7,7 +7,7 @@ pub enum AddressType {
 
 pub enum Address {
     IPv4([u8; 4]),
-    IPv6([u8; 16]),
+    IPv6([u8; 8]),
 }
 
 #[derive(PartialEq, Clone, Debug, Copy, Eq)]
