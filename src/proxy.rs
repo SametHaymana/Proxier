@@ -17,15 +17,25 @@ impl Proxy {
     }
 
     // User operations
-    pub fn add_user(&mut self, username: String, password: String) {
-        self.users.lock().unwrap().insert(username, password);
+    pub fn add_user(
+        &mut self,
+        username: String,
+        password: String,
+    ) {
+        self.users
+            .lock()
+            .unwrap()
+            .insert(username, password);
     }
 
     pub fn remove_user(&mut self, username: String) {
         self.users.lock().unwrap().remove(&username);
     }
 
-    pub fn get_user(&self, username: String) -> Option<String> {
+    pub fn get_user(
+        &self,
+        username: String,
+    ) -> Option<String> {
         self.users.lock().unwrap().get(&username).cloned()
     }
 
