@@ -1,4 +1,6 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{
+    AsyncReadExt, AsyncWriteExt, Error, ReadHalf, WriteHalf,
+};
 use tokio::net::TcpStream;
 
 pub async fn bidirectional_streaming(
@@ -17,4 +19,11 @@ pub async fn bidirectional_streaming(
             Err(_) => break, // Error reading
         }
     }
+}
+
+pub async fn connect_remote(
+    address: String,
+) -> Result<TcpStream, Error> {
+    let stream = TcpStream::connect(address).await?;
+    Ok(stream)
 }
