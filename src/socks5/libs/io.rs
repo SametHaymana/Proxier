@@ -1,9 +1,29 @@
 use tokio::io::{
-    AsyncReadExt, AsyncWriteExt, Error, ReadHalf, WriteHalf,
+    split, AsyncReadExt, AsyncWriteExt, Error, ReadHalf,
+    WriteHalf,
 };
 use tokio::net::TcpStream;
 
-pub async fn bidirectional_streaming(
+pub async fn connect_stream(
+    socket: TcpStream,
+    remote: TcpStream,
+) {
+    let (client_reader, client_writer) = split(socket);
+    let (server_reader, server_writer) = split(remote);
+
+    tokio::join!(
+        bidirectional_streaming(
+            client_reader,
+            server_writer,
+        ),
+        bidirectional_streaming(
+            server_reader,
+            client_writer,
+        ),
+    );
+}
+
+async fn bidirectional_streaming(
     mut reader: ReadHalf<TcpStream>,
     mut writer: WriteHalf<TcpStream>,
 ) {
@@ -12,7 +32,11 @@ pub async fn bidirectional_streaming(
         match reader.read(&mut buf).await {
             Ok(0) => break, // Connection closed
             Ok(n) => {
-                if writer.write_all(&buf[..n]).await.is_err() {
+                if writer
+                    .write_all(&buf[..n])
+                    .await
+                    .is_err()
+                {
                     break; // Error or connection closed
                 }
             }
