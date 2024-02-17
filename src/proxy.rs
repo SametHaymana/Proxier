@@ -41,8 +41,8 @@ impl Proxy {
 
     pub fn check_valid_auth_method(
         &self,
-        auth_method: &AuthMethods,
+        auth_method: AuthMethods,
     ) -> bool {
-        return self.auth_methods.contains(auth_method);
+        return self.auth_methods.contains(&auth_method);
     }
 }
