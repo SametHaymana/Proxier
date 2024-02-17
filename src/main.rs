@@ -39,12 +39,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .await
         {
-            Ok(_) => {
-                println!("Proxy thread finished");
-            }
-            Err(e) => {
-                println!("Error in proxy thread: {}", e);
-            }
+          socks5::libs::errors::ProxyResult::Err(_e) =>{
+            
+        },
+          socks5::libs::errors::ProxyResult::Ok(_n) =>{
+            println!("Nice")
+          }
         }
     });
 
