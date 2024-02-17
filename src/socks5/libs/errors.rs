@@ -2,9 +2,11 @@
 #[derive(Debug)]
 pub enum  ProxyError {
     LocalPortBindError,
+    IoReadingError,
     AuthError,
     ReplyError,
-    RemoteConnectionError
+    RemoteConnectionError,
+    ServerError
 }
 
 
