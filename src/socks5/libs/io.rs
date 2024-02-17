@@ -4,13 +4,13 @@ use tokio::io::{
 };
 use tokio::net::TcpStream;
 
-use super::errors::ProxyResult;
 use super::errors::ProxyError;
+use super::errors::ProxyResult;
 
 pub async fn connect_stream(
     socket: TcpStream,
     remote: TcpStream,
-)-> ProxyResult<()> {
+) -> ProxyResult<()> {
     let (client_reader, client_writer) = split(socket);
     let (server_reader, server_writer) = split(remote);
 
@@ -26,7 +26,6 @@ pub async fn connect_stream(
     );
 
     return ProxyResult::Ok(());
-    
 }
 
 async fn bidirectional_streaming(

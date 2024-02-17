@@ -6,11 +6,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::proxy::Proxy;
+use crate::socks5::libs::errors::ProxyError;
 use crate::socks5::libs::io::connect_stream;
 use crate::socks5::libs::statics::{
     AddressType, AuthMethods, Commands, FromToU8,
 };
-use crate::socks5::libs::errors::ProxyError;
 
 use super::libs::errors::ProxyResult;
 use super::libs::io::connect_remote;
@@ -32,31 +32,32 @@ pub async fn start_proxy(
         server_port.unwrap_or(1080)
     ));
 
-
-
     let listener =
         match TcpListener::bind(proxy_addr.clone()).await {
             Ok(_l) => _l,
             Err(_e) => {
-                return  ProxyResult::Err(ProxyError::LocalPortBindError);
+                return ProxyResult::Err(
+                    ProxyError::LocalPortBindError,
+                );
             }
-        };  
+        };
 
     println!("Proxys listening on: {}", proxy_addr);
 
     loop {
         match listener.accept().await {
-            Ok((socket,_)) =>{
+            Ok((socket, _)) => {
                 let copy = proxy.clone();
                 tokio::spawn(async move {
                     handle_connection(copy, socket).await;
                 });
-            },
-            Err(_e) =>{
-                return  ProxyResult::Err(ProxyError::RemoteConnectionError);
-            }     
+            }
+            Err(_e) => {
+                return ProxyResult::Err(
+                    ProxyError::RemoteConnectionError,
+                );
+            }
         };
-       
     }
 }
 
@@ -67,7 +68,9 @@ async fn handle_connection(
     let mut buf: [u8; 258] = [0; 258];
 
     if let Err(_e) = socket.read(&mut buf).await {
-        return  ProxyResult::Err(ProxyError::IoReadingError);
+        return ProxyResult::Err(
+            ProxyError::IoReadingError,
+        );
     }
 
     if !check_valid_version(&buf[0]) {
@@ -77,7 +80,9 @@ async fn handle_connection(
             ))
             .await
         {
-            return  ProxyResult::Err(ProxyError::ReplyError);
+            return ProxyResult::Err(
+                ProxyError::ReplyError,
+            );
         }
     }
 
@@ -97,12 +102,15 @@ async fn handle_connection(
             ))
             .await
         {
-            return  ProxyResult::Err(ProxyError::ReplyError);
+            return ProxyResult::Err(
+                ProxyError::ReplyError,
+            );
         }
 
         if let Err(_e) = socket.read(&mut buf).await {
-            return  ProxyResult::Err(ProxyError::IoReadingError);
-
+            return ProxyResult::Err(
+                ProxyError::IoReadingError,
+            );
         }
 
         let username_length = buf[1] as usize;
@@ -118,16 +126,18 @@ async fn handle_connection(
         let username = match String::from_utf8(username) {
             Ok(u) => u,
             Err(e) => {
-                return  ProxyResult::Err(ProxyError::ServerError);
-
+                return ProxyResult::Err(
+                    ProxyError::ServerError,
+                );
             }
         };
 
         let password = match String::from_utf8(password) {
             Ok(p) => p,
             Err(e) => {
-                return  ProxyResult::Err(ProxyError::ServerError);
-
+                return ProxyResult::Err(
+                    ProxyError::ServerError,
+                );
             }
         };
 
@@ -144,7 +154,9 @@ async fn handle_connection(
                         ))
                         .await
                     {
-                        return  ProxyResult::Err(ProxyError::ReplyError);
+                        return ProxyResult::Err(
+                            ProxyError::ReplyError,
+                        );
                     }
                     return ProxyResult::Ok(());
                 }
@@ -157,7 +169,9 @@ async fn handle_connection(
                     ))
                     .await
                 {
-                    return  ProxyResult::Err(ProxyError::ReplyError);
+                    return ProxyResult::Err(
+                        ProxyError::ReplyError,
+                    );
                 }
 
                 return ProxyResult::Ok(());
@@ -165,12 +179,18 @@ async fn handle_connection(
         }
 
         // Reply auth success
-        if let Err(_e) = socket.write(&Reply::create_auth_reply(Reply::Succeeded)).await{
-            return  ProxyResult::Err(ProxyError::ReplyError);
+        if let Err(_e) = socket
+            .write(&Reply::create_auth_reply(
+                Reply::Succeeded,
+            ))
+            .await
+        {
+            return ProxyResult::Err(
+                ProxyError::ReplyError,
+            );
         }
 
         make_proxy(socket).await
-
     } else if methods.contains(&AuthMethods::NoAuth.to_u8())
         && proxy
             .check_valid_auth_method(AuthMethods::NoAuth)
@@ -181,7 +201,9 @@ async fn handle_connection(
             ))
             .await
         {
-            return  ProxyResult::Err(ProxyError::ReplyError);
+            return ProxyResult::Err(
+                ProxyError::ReplyError,
+            );
         }
 
         make_proxy(socket).await
@@ -192,10 +214,12 @@ async fn handle_connection(
             ))
             .await
         {
-            return  ProxyResult::Err(ProxyError::ReplyError);
+            return ProxyResult::Err(
+                ProxyError::ReplyError,
+            );
         }
 
-        return  ProxyResult::Ok(());
+        return ProxyResult::Ok(());
     }
 }
 
@@ -205,7 +229,9 @@ async fn handle_connection(
  *
  *
 */
-async fn make_proxy(mut socket: TcpStream) -> ProxyResult<()> {
+async fn make_proxy(
+    mut socket: TcpStream,
+) -> ProxyResult<()> {
     let mut request: [u8; 4] = [0; 4];
 
     if let Err(_e) = socket.read(&mut request).await {
@@ -224,7 +250,6 @@ async fn make_proxy(mut socket: TcpStream) -> ProxyResult<()> {
             println!("Connect command");
 
             connection_handler(socket, address_type).await
-
         }
         Commands::Bind => {
             println!("Bind command not supported");
@@ -298,7 +323,9 @@ async fn connection_handler(
                             if let Err(_e) =
                                 socket.write(&reply).await
                             {
-                                return  ProxyResult::Err(ProxyError::ReplyError);
+                                return ProxyResult::Err(
+                                    ProxyError::ReplyError,
+                                );
                             }
                             return  ProxyResult::Err(ProxyError::RemoteConnectionError);
                         }
@@ -318,14 +345,18 @@ async fn connection_handler(
                         )
                         .await
                     {
-                        return  ProxyResult::Err(ProxyError::ReplyError);
+                        return ProxyResult::Err(
+                            ProxyError::ReplyError,
+                        );
                     }
 
-                    return  connect_stream(socket, remote).await;
-
+                    return connect_stream(socket, remote)
+                        .await;
                 }
                 Err(_e) => {
-                    return  ProxyResult::Err(ProxyError::IoReadingError);
+                    return ProxyResult::Err(
+                        ProxyError::IoReadingError,
+                    );
                 }
             }
         }
@@ -406,7 +437,6 @@ async fn connection_handler(
                                         socket, remote,
                                     )
                                     .await;
-
                                 }
                                 Err(_e) => {
                                     return  ProxyResult::Err(ProxyError::IoReadingError);
@@ -414,12 +444,16 @@ async fn connection_handler(
                             }
                         }
                         Err(_e) => {
-                            return  ProxyResult::Err(ProxyError::IoReadingError);
+                            return ProxyResult::Err(
+                                ProxyError::IoReadingError,
+                            );
                         }
                     }
                 }
                 Err(_e) => {
-                    return  ProxyResult::Err(ProxyError::IoReadingError);
+                    return ProxyResult::Err(
+                        ProxyError::IoReadingError,
+                    );
                 }
             }
         }
@@ -468,7 +502,9 @@ async fn connection_handler(
                             if let Err(_e) =
                                 socket.write(&reply).await
                             {
-                                return  ProxyResult::Err(ProxyError::ReplyError);
+                                return ProxyResult::Err(
+                                    ProxyError::ReplyError,
+                                );
                             }
                             return  ProxyResult::Err(ProxyError::RemoteConnectionError);
                         }
@@ -488,13 +524,18 @@ async fn connection_handler(
                         )
                         .await
                     {
-                        return  ProxyResult::Err(ProxyError::ReplyError);
+                        return ProxyResult::Err(
+                            ProxyError::ReplyError,
+                        );
                     }
 
-                    return  connect_stream(socket, remote).await;
+                    return connect_stream(socket, remote)
+                        .await;
                 }
                 Err(_e) => {
-                    return  ProxyResult::Err(ProxyError::IoReadingError);
+                    return ProxyResult::Err(
+                        ProxyError::IoReadingError,
+                    );
                 }
             }
         }

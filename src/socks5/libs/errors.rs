@@ -1,23 +1,19 @@
-
 #[derive(Debug)]
-pub enum  ProxyError {
+pub enum ProxyError {
     LocalPortBindError,
     IoReadingError,
     AuthError,
     ReplyError,
     RemoteConnectionError,
-    ServerError
+    ServerError,
 }
 
-
-pub enum  ProxyResult<T> {
+pub enum ProxyResult<T> {
     Ok(T),
-    Err(ProxyError)
+    Err(ProxyError),
 }
-
 
 impl<T> ProxyResult<T> {
-
     fn is_ok(&self) -> bool {
         matches!(*self, ProxyResult::Ok(_))
     }
@@ -25,8 +21,9 @@ impl<T> ProxyResult<T> {
     fn unwrap(self) -> T {
         match self {
             ProxyResult::Ok(val) => val,
-            ProxyResult::Err(_e) => panic!("Proxy panic err: {:?}",_e),
+            ProxyResult::Err(_e) => {
+                panic!("Proxy panic err: {:?}", _e)
+            }
         }
     }
-    
 }

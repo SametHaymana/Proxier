@@ -34,17 +34,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // Create a new Tokio runtime
         match handlers::start_proxy(
             Arc::new(proxy),
-            Some(server_addr),
-            Some(server_port),
+            Some(server_addr.clone()),
+            Some(server_port.clone()),
         )
         .await
         {
-          socks5::libs::errors::ProxyResult::Err(_e) =>{
-            
-        },
-          socks5::libs::errors::ProxyResult::Ok(_n) =>{
-            println!("Nice")
-          }
+            socks5::libs::errors::ProxyResult::Err(_e) => {}
+            socks5::libs::errors::ProxyResult::Ok(_n) => {
+                println!(
+                    "Server started on {}:{}",
+                    server_addr, server_port
+                );
+            }
         }
     });
 
