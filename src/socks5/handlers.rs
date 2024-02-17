@@ -1,3 +1,4 @@
+use core::panic;
 use std::error::Error;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -49,142 +50,134 @@ async fn handle_connection(
 ) {
     let mut buf: [u8; 258] = [0; 258];
 
-    match socket.read(&mut buf).await {
-        Ok(_n) => {
-            if !check_valid_version(&buf[0]) {
-                if let Err(_e) = socket
-                    .write(&Reply::create_auth_reply(
-                        Reply::GeneralFailure,
-                    ))
-                    .await
-                {
-                    panic!("Error sending response");
+    if let Err(_e) = socket.read(&mut buf).await {
+        panic!("Error reading from socket");
+    }
+
+    if !check_valid_version(&buf[0]) {
+        if let Err(_e) = socket
+            .write(&Reply::create_auth_reply(
+                Reply::GeneralFailure,
+            ))
+            .await
+        {
+            panic!("Error sending reply");
+        }
+    }
+
+    let methods = &buf[2..(2 + buf[1] as usize)];
+    println!("Methods {:?}", methods);
+
+    if methods
+        .contains(&AuthMethods::UsernamePassword.to_u8())
+        && proxy.check_valid_auth_method(
+            AuthMethods::UsernamePassword,
+        )
+    {
+        // Reply as accepted
+        if let Err(_e) = socket
+            .write(&Reply::create_auth_reply(
+                AuthMethods::UsernamePassword,
+            ))
+            .await
+        {
+            panic!("Reply error {}", _e);
+        }
+
+        if let Err(_e) = socket.read(&mut buf).await {
+            println!(
+                "Error reading username and password: {}",
+                _e
+            );
+        }
+
+        let username_length = buf[1] as usize;
+        let password_length =
+            buf[2 + username_length] as usize;
+
+        // Correctly slice the buffer to extract username and password as Vec<u8>
+        let username = buf[2..2 + username_length].to_vec();
+        let password = buf[3 + username_length
+            ..3 + username_length + password_length]
+            .to_vec();
+
+        let username = match String::from_utf8(username) {
+            Ok(u) => u,
+            Err(e) => {
+                println!("Error decoding username: {}", e);
+                return;
+            }
+        };
+
+        let password = match String::from_utf8(password) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("Error decoding password: {}", e);
+                return;
+            }
+        };
+
+        println!("Username: {:?}", username);
+        println!("Password: {:?}", password);
+
+        match proxy.get_user(username) {
+            Some(expected_password) => {
+                if expected_password != password {
+                    println!("Invalid Password");
+                    if let Err(e) = socket
+                        .write(&Reply::create_auth_reply(
+                            Reply::GeneralFailure,
+                        ))
+                        .await
+                    {
+                        println!("Error sending failure response: {}", e);
+                    }
+                    return;
                 }
             }
-
-            let methods = &buf[2..(2 + buf[1] as usize)];
-
-            // Proxy has two auth methods
-            // With UsernamePassword and NoAuth
-            // UsernamePassword is most priority
-            if methods.contains(
-                &AuthMethods::UsernamePassword.to_u8(),
-            ) && proxy.check_valid_auth_method(
-                &AuthMethods::UsernamePassword,
-            ) {
-                // Send UsernamePassword accept repl
-                if let Err(_e) = socket
-                    .write(&Reply::create_auth_reply(
-                        Reply::Succeeded,
-                    ))
-                    .await
-                {
-                    panic!("Error sending response");
-                }
-
-                let mut buf: [u8; 258] = [0; 258];
-
-                match socket.read(&mut buf).await {
-                    Ok(n) => {
-                        let username_length = buf[1];
-                        let password_length = buf
-                            [2 + username_length as usize];
-
-                        let username = &buf[2..(2
-                            + username_length as usize)];
-                        let password = &buf[(3
-                            + username_length as usize)
-                            ..(3 + username_length
-                                as usize
-                                + password_length
-                                    as usize)];
-
-                        let username = String::from_utf8(
-                            username.to_vec(),
-                        )
-                        .unwrap();
-                        let password = String::from_utf8(
-                            password.to_vec(),
-                        )
-                        .unwrap();
-
-                        match proxy
-                            .get_user(username.clone())
-                        {
-                            Some(_password) => {
-                                if _password == password {
-                                    if let Err(_e) = socket
-                                        .write(&Reply::create_auth_reply(
-                                            Reply::Succeeded,
-                                        ))
-                                        .await
-                                    {
-                                        panic!("Error sending response");
-                                    }
-
-                                    make_proxy(socket)
-                                        .await;
-                                } else {
-                                    if let Err(_e) = socket
-                                        .write(&Reply::create_auth_reply(
-                                            Reply::GeneralFailure,
-                                        ))
-                                        .await
-                                    {
-                                        panic!("Error sending response");
-                                    }
-                                    return;
-                                }
-                            }
-                            None => {
-                                if let Err(_e) = socket
-                                    .write(&Reply::create_auth_reply(
-                                        Reply::GeneralFailure,
-                                    ))
-                                    .await
-                                {
-                                    panic!("Error sending response");
-                                }
-                                return;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!(
-                            "Error reading from socket: {}",
-                            e
-                        );
-                    }
-                }
-            } else if methods
-                .contains(&AuthMethods::NoAuth.to_u8())
-                && proxy.check_valid_auth_method(
-                    &AuthMethods::NoAuth,
-                )
-            {
-                if let Err(_e) = socket
-                    .write(&Reply::create_auth_reply(
-                        Reply::Succeeded,
-                    ))
-                    .await
-                {
-                    panic!("Error sending response");
-                }
-
-                make_proxy(socket).await;
-            } else {
-                if let Err(_e) = socket
+            None => {
+                println!("Invalid Username");
+                if let Err(e) = socket
                     .write(&Reply::create_auth_reply(
                         Reply::GeneralFailure,
                     ))
                     .await
                 {
-                    panic!("Error sending response");
+                    println!("Error sending failure response: {}", e);
                 }
+
+                return;
             }
         }
-        Err(e) => {
-            println!("Error reading from socket: {}", e);
+
+        // Reply auth success
+        if let Err(_e) = socket.write(&Reply::create_auth_reply(Reply::Succeeded)).await{
+            panic!("Error at reply");
+        }
+
+        make_proxy(socket).await;
+    } else if methods.contains(&AuthMethods::NoAuth.to_u8())
+        && proxy
+            .check_valid_auth_method(AuthMethods::NoAuth)
+    {
+        if let Err(e) = socket
+            .write(&Reply::create_auth_reply(
+                Reply::Succeeded,
+            ))
+            .await
+        {
+            println!("Error sending response: {}", e);
+            return;
+        }
+        make_proxy(socket).await;
+    } else {
+        if let Err(e) = socket
+            .write(&Reply::create_auth_reply(
+                Reply::GeneralFailure,
+            ))
+            .await
+        {
+            println!("Error sending response: {}", e);
         }
     }
 }
@@ -198,47 +191,56 @@ async fn handle_connection(
 async fn make_proxy(mut socket: TcpStream) {
     let mut request: [u8; 4] = [0; 4];
 
-    // Read First 4 bytes
-    match socket.read(&mut request).await {
-        Ok(n) => {
-            println!("Request : {:?}", request);
+    if let Err(_e) = socket.read(&mut request).await {
+        panic!("Error reading from socket: {}", _e);
+    }
 
-            if !check_valid_version(&request[0]) {
-                println!("Not socks5 version");
-                return;
-            }
+    if !check_valid_version(&request[0]) {
+        panic!("Invalid Version");
+    }
 
-            let command = Commands::from_u8(request[1]);
-            let address_type =
-                AddressType::from_u8(request[3]);
+    let command = Commands::from_u8(request[1]);
+    let address_type = AddressType::from_u8(request[3]);
 
-            match command {
-                Commands::Connect => {
-                    println!("Connect command");
-                    connection_handler(
-                        socket,
-                        address_type,
-                    )
-                    .await;
-                }
-                Commands::Bind => {
-                    println!("Bind command not supported");
-                    return;
-                }
-                Commands::UDPAssociate => {
-                    println!("UDPAssociate command not supported");
-                    return;
-                }
+    match command {
+        Commands::Connect => {
+            println!("Connect command");
+            connection_handler(socket, address_type).await;
+        }
+        Commands::Bind => {
+            println!("Bind command not supported");
+
+            let reply = Reply::create_connection_reply(
+                Reply::CommandNotSupported,
+                AddressType::IPv4,
+                Address::IPv4([0, 0, 0, 0]),
+                0,
+            );
+
+            if let Err(_e) = socket.write(&reply).await {
+                panic!("Error sending response");
             }
 
             return;
         }
-        Err(e) => {
-            panic!("Error reading from socket: {}", e);
+        Commands::UDPAssociate => {
+            println!("UDPAssociate command not supported");
+
+            let reply = Reply::create_connection_reply(
+                Reply::CommandNotSupported,
+                AddressType::IPv4,
+                Address::IPv4([0, 0, 0, 0]),
+                0,
+            );
+
+            if let Err(_e) = socket.write(&reply).await {
+                panic!("Error sending response");
+            }
+
+            return;
         }
     }
 }
-
 
 async fn connection_handler(
     mut socket: TcpStream,
