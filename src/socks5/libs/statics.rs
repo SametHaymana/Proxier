@@ -27,6 +27,7 @@ pub enum Commands {
     UDPAssociate = 0x03,
 }
 
+#[derive(PartialEq, Clone, Debug, Copy, Eq)]
 pub enum Reply {
     Succeeded = 0x00,
     GeneralFailure = 0x01,
@@ -44,11 +45,33 @@ pub trait FromToU8 {
     fn from_u8(value: u8) -> Self;
 }
 
+impl FromToU8 for Reply {
+    fn to_u8(&self) -> u8 {
+        return *self as u8;
+    }
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0x00 => Reply::Succeeded,
+            0x01 => Reply::GeneralFailure,
+            0x02 => Reply::ConnectionNotAllowed,
+            0x03 => Reply::NetworkUnreachable,
+            0x04 => Reply::HostUnreachable,
+            0x05 => Reply::ConnectionRefused,
+            0x06 => Reply::TTLExpired,
+            0x07 => Reply::CommandNotSupported,
+            0x08 => Reply::AddressTypeNotSupported,
+            _ => Reply::GeneralFailure,
+        }
+    }
+}
+
 impl Reply {
-    pub fn create_auth_reply(status: Reply) -> [u8; 2] {
+    pub fn create_auth_reply<T: FromToU8>(
+        status: T,
+    ) -> [u8; 2] {
         let mut reply: [u8; 2] = [0; 2];
         reply[0] = 5u8;
-        reply[1] = status as u8;
+        reply[1] = status.to_u8();
 
         reply
     }
