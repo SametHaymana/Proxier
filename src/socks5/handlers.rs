@@ -23,12 +23,11 @@ pub fn check_valid_version(version: &u8) -> bool {
 
 pub async fn start_proxy(
     proxy: Arc<Proxy>,
-    server_addr: Option<String>,
     server_port: Option<i32>,
 ) -> ProxyResult<()> {
     let proxy_addr = String::from(format!(
         "{}:{}",
-        server_addr.unwrap_or(String::from("0.0.0.0")),
+        String::from("0.0.0.0"),
         server_port.unwrap_or(1080)
     ));
 
