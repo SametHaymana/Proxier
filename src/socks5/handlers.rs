@@ -10,7 +10,9 @@ use crate::socks5::libs::io::connect_stream;
 use crate::socks5::libs::statics::{
     AddressType, AuthMethods, Commands, FromToU8,
 };
+use crate::socks5::libs::errors::ProxyError;
 
+use super::libs::errors::ProxyResult;
 use super::libs::io::connect_remote;
 use super::libs::statics::{Address, Reply};
 
@@ -23,35 +25,49 @@ pub async fn start_proxy(
     proxy: Arc<Proxy>,
     server_addr: Option<String>,
     server_port: Option<i32>,
-) -> Result<(), Box<dyn Error>> {
+) -> ProxyResult<()> {
     let proxy_addr = String::from(format!(
         "{}:{}",
         server_addr.unwrap_or(String::from("0.0.0.0")),
         server_port.unwrap_or(1080)
     ));
 
+
+
     let listener =
-        TcpListener::bind(proxy_addr.clone()).await?;
+        match TcpListener::bind(proxy_addr.clone()).await {
+            Ok(_l) => _l,
+            Err(_e) => {
+                return  ProxyResult::Err(ProxyError::LocalPortBindError);
+            }
+        };  
 
     println!("Proxys listening on: {}", proxy_addr);
 
     loop {
-        let (socket, _) = listener.accept().await?;
-        let copy = proxy.clone();
-        tokio::spawn(async move {
-            handle_connection(copy, socket).await;
-        });
+        match listener.accept().await {
+            Ok((socket,_)) =>{
+                let copy = proxy.clone();
+                tokio::spawn(async move {
+                    handle_connection(copy, socket).await;
+                });
+            },
+            Err(_e) =>{
+                return  ProxyResult::Err(ProxyError::RemoteConnectionError);
+            }     
+        };
+       
     }
 }
 
 async fn handle_connection(
     proxy: Arc<Proxy>,
     mut socket: TcpStream,
-) {
+) -> ProxyResult<()> {
     let mut buf: [u8; 258] = [0; 258];
 
     if let Err(_e) = socket.read(&mut buf).await {
-        panic!("Error reading from socket");
+        return  ProxyResult::Err(ProxyError::IoReadingError);
     }
 
     if !check_valid_version(&buf[0]) {
@@ -61,7 +77,7 @@ async fn handle_connection(
             ))
             .await
         {
-            panic!("Error sending reply");
+            return  ProxyResult::Err(ProxyError::ReplyError);
         }
     }
 
@@ -81,14 +97,12 @@ async fn handle_connection(
             ))
             .await
         {
-            panic!("Reply error {}", _e);
+            return  ProxyResult::Err(ProxyError::ReplyError);
         }
 
         if let Err(_e) = socket.read(&mut buf).await {
-            println!(
-                "Error reading username and password: {}",
-                _e
-            );
+            return  ProxyResult::Err(ProxyError::IoReadingError);
+
         }
 
         let username_length = buf[1] as usize;
@@ -104,16 +118,16 @@ async fn handle_connection(
         let username = match String::from_utf8(username) {
             Ok(u) => u,
             Err(e) => {
-                println!("Error decoding username: {}", e);
-                return;
+                return  ProxyResult::Err(ProxyError::ServerError);
+
             }
         };
 
         let password = match String::from_utf8(password) {
             Ok(p) => p,
             Err(e) => {
-                println!("Error decoding password: {}", e);
-                return;
+                return  ProxyResult::Err(ProxyError::ServerError);
+
             }
         };
 
@@ -130,9 +144,9 @@ async fn handle_connection(
                         ))
                         .await
                     {
-                        println!("Error sending failure response: {}", e);
+                        return  ProxyResult::Err(ProxyError::ReplyError);
                     }
-                    return;
+                    return ProxyResult::Ok(());
                 }
             }
             None => {
@@ -143,19 +157,20 @@ async fn handle_connection(
                     ))
                     .await
                 {
-                    println!("Error sending failure response: {}", e);
+                    return  ProxyResult::Err(ProxyError::ReplyError);
                 }
 
-                return;
+                return ProxyResult::Ok(());
             }
         }
 
         // Reply auth success
         if let Err(_e) = socket.write(&Reply::create_auth_reply(Reply::Succeeded)).await{
-            panic!("Error at reply");
+            return  ProxyResult::Err(ProxyError::ReplyError);
         }
 
-        make_proxy(socket).await;
+        make_proxy(socket).await
+
     } else if methods.contains(&AuthMethods::NoAuth.to_u8())
         && proxy
             .check_valid_auth_method(AuthMethods::NoAuth)
@@ -166,10 +181,10 @@ async fn handle_connection(
             ))
             .await
         {
-            println!("Error sending response: {}", e);
-            return;
+            return  ProxyResult::Err(ProxyError::ReplyError);
         }
-        make_proxy(socket).await;
+
+        make_proxy(socket).await
     } else {
         if let Err(e) = socket
             .write(&Reply::create_auth_reply(
@@ -177,8 +192,10 @@ async fn handle_connection(
             ))
             .await
         {
-            println!("Error sending response: {}", e);
+            return  ProxyResult::Err(ProxyError::ReplyError);
         }
+
+        return  ProxyResult::Ok(());
     }
 }
 
@@ -188,7 +205,7 @@ async fn handle_connection(
  *
  *
 */
-async fn make_proxy(mut socket: TcpStream) {
+async fn make_proxy(mut socket: TcpStream) -> ProxyResult<()> {
     let mut request: [u8; 4] = [0; 4];
 
     if let Err(_e) = socket.read(&mut request).await {
@@ -205,7 +222,9 @@ async fn make_proxy(mut socket: TcpStream) {
     match command {
         Commands::Connect => {
             println!("Connect command");
-            connection_handler(socket, address_type).await;
+
+            connection_handler(socket, address_type).await
+
         }
         Commands::Bind => {
             println!("Bind command not supported");
@@ -221,7 +240,7 @@ async fn make_proxy(mut socket: TcpStream) {
                 panic!("Error sending response");
             }
 
-            return;
+            ProxyResult::Ok(())
         }
         Commands::UDPAssociate => {
             println!("UDPAssociate command not supported");
@@ -237,7 +256,7 @@ async fn make_proxy(mut socket: TcpStream) {
                 panic!("Error sending response");
             }
 
-            return;
+            ProxyResult::Ok(())
         }
     }
 }
@@ -245,7 +264,7 @@ async fn make_proxy(mut socket: TcpStream) {
 async fn connection_handler(
     mut socket: TcpStream,
     address_type: AddressType,
-) {
+) -> ProxyResult<()> {
     match address_type {
         AddressType::IPv4 => {
             let mut address: [u8; 6] = [0; 6];
@@ -279,9 +298,9 @@ async fn connection_handler(
                             if let Err(_e) =
                                 socket.write(&reply).await
                             {
-                                panic!("Error sending response");
+                                return  ProxyResult::Err(ProxyError::ReplyError);
                             }
-                            panic!("Error connecting to remote");
+                            return  ProxyResult::Err(ProxyError::RemoteConnectionError);
                         }
                     };
 
@@ -299,16 +318,14 @@ async fn connection_handler(
                         )
                         .await
                     {
-                        panic!("Error sending response");
+                        return  ProxyResult::Err(ProxyError::ReplyError);
                     }
 
-                    connect_stream(socket, remote).await;
+                    return  connect_stream(socket, remote).await;
+
                 }
                 Err(_e) => {
-                    panic!(
-                        "Error reading from socket: {}",
-                        _e
-                    );
+                    return  ProxyResult::Err(ProxyError::IoReadingError);
                 }
             }
         }
@@ -375,39 +392,34 @@ async fn connection_handler(
                                                 .write(&reply)
                                                 .await
                                             {
-                                                panic!("Error sending response");
+                                                return  ProxyResult::Err(ProxyError::ReplyError);
                                             }
-                                            panic!("Error connecting to remote");
+                                            return  ProxyResult::Err(ProxyError::RemoteConnectionError);
                                         }
                                     };
 
                                     if let Err(_e) = socket.write(&Reply::create_connection_reply(Reply::Succeeded, AddressType::IPv4, Address::IPv4([0, 0, 0, 0]), 0)).await {
-                                        panic!("Error sending response");
+                                        return  ProxyResult::Err(ProxyError::ReplyError);
                                     }
 
-                                    connect_stream(
+                                    return connect_stream(
                                         socket, remote,
                                     )
                                     .await;
+
                                 }
                                 Err(_e) => {
-                                    panic!("Error reading from socket: {}", _e);
+                                    return  ProxyResult::Err(ProxyError::IoReadingError);
                                 }
                             }
                         }
                         Err(_e) => {
-                            panic!(
-                                "Error reading from socket: {}",
-                                _e
-                            );
+                            return  ProxyResult::Err(ProxyError::IoReadingError);
                         }
                     }
                 }
                 Err(_e) => {
-                    panic!(
-                        "Error reading from socket: {}",
-                        _e
-                    );
+                    return  ProxyResult::Err(ProxyError::IoReadingError);
                 }
             }
         }
@@ -456,9 +468,9 @@ async fn connection_handler(
                             if let Err(_e) =
                                 socket.write(&reply).await
                             {
-                                panic!("Error sending response");
+                                return  ProxyResult::Err(ProxyError::ReplyError);
                             }
-                            panic!("Error connecting to remote");
+                            return  ProxyResult::Err(ProxyError::RemoteConnectionError);
                         }
                     };
 
@@ -476,16 +488,13 @@ async fn connection_handler(
                         )
                         .await
                     {
-                        panic!("Error sending response");
+                        return  ProxyResult::Err(ProxyError::ReplyError);
                     }
 
-                    connect_stream(socket, remote).await;
+                    return  connect_stream(socket, remote).await;
                 }
                 Err(_e) => {
-                    panic!(
-                        "Error reading from socket: {}",
-                        _e
-                    );
+                    return  ProxyResult::Err(ProxyError::IoReadingError);
                 }
             }
         }
