@@ -13,4 +13,7 @@ test = "cargo test"
 
 
 [dependencies]
+actix-cors = "0.7.0"
+actix-web = "4.5.1"
+serde = { version = "1.0.196", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
