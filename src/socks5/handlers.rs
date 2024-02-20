@@ -1,7 +1,7 @@
 use core::panic;
 use std::error::Error;
 use std::net::Ipv6Addr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -86,7 +86,6 @@ async fn handle_connection(
     }
 
     let methods = &buf[2..(2 + buf[1] as usize)];
-    println!("Methods {:?}", methods);
 
     if methods
         .contains(&AuthMethods::UsernamePassword.to_u8())
@@ -124,7 +123,7 @@ async fn handle_connection(
 
         let username = match String::from_utf8(username) {
             Ok(u) => u,
-            Err(e) => {
+            Err(_e) => {
                 return ProxyResult::Err(
                     ProxyError::ServerError,
                 );
@@ -133,21 +132,17 @@ async fn handle_connection(
 
         let password = match String::from_utf8(password) {
             Ok(p) => p,
-            Err(e) => {
+            Err(_e) => {
                 return ProxyResult::Err(
                     ProxyError::ServerError,
                 );
             }
         };
 
-        println!("Username: {:?}", username);
-        println!("Password: {:?}", password);
-
         match proxy.get_user(username) {
             Some(expected_password) => {
                 if expected_password != password {
-                    println!("Invalid Password");
-                    if let Err(e) = socket
+                    if let Err(_e) = socket
                         .write(&Reply::create_auth_reply(
                             Reply::GeneralFailure,
                         ))
@@ -161,8 +156,7 @@ async fn handle_connection(
                 }
             }
             None => {
-                println!("Invalid Username");
-                if let Err(e) = socket
+                if let Err(_e) = socket
                     .write(&Reply::create_auth_reply(
                         Reply::GeneralFailure,
                     ))
@@ -192,9 +186,9 @@ async fn handle_connection(
         make_proxy(socket).await
     } else if methods.contains(&AuthMethods::NoAuth.to_u8())
         && proxy
-            .check_valid_auth_method(AuthMethods::NoAuth)
+           .check_valid_auth_method(AuthMethods::NoAuth)
     {
-        if let Err(e) = socket
+        if let Err(_e) = socket
             .write(&Reply::create_auth_reply(
                 Reply::Succeeded,
             ))
@@ -207,7 +201,7 @@ async fn handle_connection(
 
         make_proxy(socket).await
     } else {
-        if let Err(e) = socket
+        if let Err(_e) = socket
             .write(&Reply::create_auth_reply(
                 Reply::GeneralFailure,
             ))
