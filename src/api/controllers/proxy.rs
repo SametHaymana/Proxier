@@ -9,37 +9,33 @@ use actix_web::{
 
 use crate::proxy::Proxy;
 
+/*
 #[derive(Deserialize, Serialize)]
 pub struct AddBody {
     method: u8,
 }
 
 pub async fn list(
-    proxy: Data<Arc<Mutex<Proxy>>>,
+    proxy: Data<Arc<Proxy>>,
 ) -> impl Responder {
-    format!("{:?}", proxy.lock().unwrap().list_auth_methods())
+    format!("{:?}", proxy.list_auth_methods())
 }
 
 pub async fn add(
-    proxy: Data<Arc<Mutex<Proxy>>>,
+    proxy: Data<Arc<Proxy>>,
     data: Json<AddBody>,
 ) -> impl Responder {
-
-    let mut p = proxy.lock().unwrap();
-
-    p.add_method(data.method);
-
-    format!("{:?}", p.list_auth_methods())
+    proxy.clone().add_method(data.method);
+    format!("{:?}", proxy.list_auth_methods())
 }
+
 
 pub async fn remove(
-    proxy: Data<Arc<Mutex<Proxy>>>,
+    proxy: Data<Proxy>,
     data: Json<AddBody>,
 ) -> impl Responder {
-    let mut p = proxy.lock().unwrap();
-
-    p.remove_method(data.method);
-
+    proxy.remove_method(data.method);
     format!("{:?}", p.list_auth_methods())
 }
 
+*/
