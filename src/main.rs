@@ -6,9 +6,8 @@ mod socks5;
 
 use crate::proxy::Proxy;
 use crate::socks5::libs::statics::AuthMethods;
-use api::app::app;
 use socks5::{handlers, libs::statics::FromToU8};
-use std::{io, sync::{Arc, Mutex}};
+use std::{io, sync::{Arc}};
 use tokio;
 
 #[tokio::main]
@@ -28,7 +27,6 @@ async fn main() -> Result<(), io::Error> {
     );
 
     let proxy_arc = Arc::new(proxy);
-    let proxy_arc_clone = proxy_arc.clone();
 
     tokio::spawn(async move {
         // Create a new Tokio runtime
@@ -43,5 +41,5 @@ async fn main() -> Result<(), io::Error> {
         }
     });
 
-    app(proxy_arc_clone).await
+    Ok(())
 }
