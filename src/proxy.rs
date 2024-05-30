@@ -1,15 +1,125 @@
 use std::sync::Mutex;
-use std::{clone, collections::HashMap};
+use std::collections::{HashMap, BTreeSet};
 
-use serde::de::value;
 
 use crate::socks5::libs::statics::{AuthMethods, FromToU8};
 
 pub struct Proxy {
+
+    /*
+    
+        Avaliable auth method for proxy server
+
+    
+    */
     avaliable_methods: HashMap<u8, String>,
+
+
+    /*
+    
+        Accepted Auth methods of proxy server
+    
+    */
     auth_methods: Mutex<HashMap<u8, String>>,
+
+
+    /*
+    
+        Proxy server user/pass information
+    
+    */
     users: Mutex<HashMap<String, String>>,
+
+
+    /*
+    
+        Caching opption
+
+    */
+    // TODO
+    cache: Mutex<bool>,
+
+
+    /*
+    
+        Block list for remote connections
+    
+    */
+    // TODO
+    block_remote_list: Mutex<BTreeSet<String>>,
+
+
+
+    /*
+
+        Block list for client 
+    
+    */
+    // TODO
+    block_client_list: Mutex<BTreeSet<String>>,
+
+
+    /*
+    
+        Max connection limit
+    
+    */
+    // TODO
+    max_connection: Mutex<u32>,
+
+
+
+    /*
+    
+        Current connection count
+    
+    */
+    // TODO
+    current_connection: Mutex<u32>,
+
+
+    /*
+
+        Ad enable option, if this optiona enabled proxy server will block ad remote address,
+        
+        if this make enable we will grab ad domain list from remote server and block them
+
+        ad list can be found in https://pgl.yoyo.org/adservers/
+    
+    */
+    // TODO
+    block_ad: Mutex<bool>,
+
+
+    /*
+    
+        Block trackers option, if this optiona enabled proxy server will block tracker remote address,
+
+        if this make enable we will grab tracker domain list from remote server and block them
+
+    
+    */
+    // TODO
+    block_tracker: Mutex<bool>,
+
+
+    /*
+
+        Block malware option, if this optiona enabled proxy server will block malware remote address,
+
+        if this make enable we will grab malware domain list from remote server and block them
+
+        Google Safe Browsing API, PhishTank, StopBadware, etc.
+    
+    */
+    // TODO
+    block_malware: Mutex<bool>,
+
 }
+
+
+
+
 
 impl Proxy {
     pub fn new() -> Proxy {
@@ -30,10 +140,25 @@ impl Proxy {
             avaliable_methods,
             auth_methods: Mutex::new(HashMap::new()),
             users: Mutex::new(HashMap::new()),
+            cache: Mutex::new(false),
+            block_remote_list: Mutex::new(BTreeSet::new()),
+            block_client_list: Mutex::new(BTreeSet::new()),
+            max_connection: Mutex::new(0),
+            current_connection: Mutex::new(0),
+            block_ad: Mutex::new(false),
+            block_tracker: Mutex::new(false),
+            block_malware: Mutex::new(false),
         }
     }
 
     // User operations
+    pub fn get_user(
+        &self,
+        username: String,
+    ) -> Option<String> {
+        self.users.lock().unwrap().get(&username).cloned()
+    }
+
     pub fn add_user(
         &mut self,
         username: String,
@@ -49,12 +174,7 @@ impl Proxy {
         self.users.lock().unwrap().remove(&username);
     }
 
-    pub fn get_user(
-        &self,
-        username: String,
-    ) -> Option<String> {
-        self.users.lock().unwrap().get(&username).cloned()
-    }
+
 
     // Auth methods operations
 
@@ -112,3 +232,5 @@ impl Proxy {
         self.list_auth_methods()
     }
 }
+
+
