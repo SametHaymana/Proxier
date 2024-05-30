@@ -1,3 +1,6 @@
+use std::io;
+
+
 #[derive(Debug)]
 pub enum ProxyError {
     LocalPortBindError,
@@ -24,6 +27,17 @@ impl<T> ProxyResult<T> {
             ProxyResult::Err(_e) => {
                 panic!("Proxy panic err: {:?}", _e)
             }
+        }
+    }
+}
+
+impl From<io::Error> for ProxyError {
+    fn from(value: io::Error) -> Self {
+        match value.kind() {
+            io::ErrorKind::NotFound => ProxyError::RemoteConnectionError,
+            io::ErrorKind::AddrInUse => ProxyError::LocalPortBindError,
+            io::ErrorKind::PermissionDenied => ProxyError::LocalPortBindError,
+            _ => ProxyError::IoReadingError
         }
     }
 }

@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-mod api;
 mod proxy;
 mod socks5;
 
@@ -40,6 +39,8 @@ async fn main() -> Result<(), io::Error> {
             socks5::libs::errors::ProxyResult::Ok(_n) => {}
         }
     });
+
+    loop {/* Loop for serving */ }
 
     Ok(())
 }
