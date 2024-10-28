@@ -3,7 +3,6 @@ name = "proxy"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [scripts]
 build = "cargo build --release"
@@ -14,6 +13,34 @@ test = "cargo test"
 
 [dependencies]
 actix-cors = "0.7.0"
-actix-web = "4.5.1"
-serde = { version = "1.0.196", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
+actix-web = "4.9.0"
+async-trait = "0.1.83"
+dotenv = "0.15.0"
+serde = { version = "1.0.213", features = ["derive"] }
+tokio = { version = "1.41", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"  
+
+reqwest = { version = "0.11", features = ["socks", "rustls-tls"] }
+futures = "0.3"
+
+
+[dependencies.uuid]
+version = "1.11.0"
+features = [
+    "v4",                
+    "fast-rng",          
+    "macro-diagnostics", 
+]
+
+
+
+[dev-dependencies]
+criterion = "0.4"
+
+
+
+
+[rust]
+debug = true
+debuginfo-level = 2
