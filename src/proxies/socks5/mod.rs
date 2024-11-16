@@ -156,6 +156,7 @@ impl Socks5Proxy {
             .contains(&AuthMethods::NoAuth.to_byte())
         {
             info!("NO AUTH");
+            
         } else {
             Self::close_socket(&mut socket).await;
             return Ok(());
@@ -208,7 +209,12 @@ impl Socks5Proxy {
 
 
             }
-            CommandType::Bind => {}
+            CommandType::Bind => {
+
+                Self::cmd_bind_handler(socket, req).await;
+
+
+            }
             CommandType::UdpAssociate => {}
         }
     }
@@ -224,7 +230,7 @@ impl Socks5Proxy {
             return ;
         };
 
-        let Ok(mut remote_socket) = TcpStream::connect(adrs).await else{
+        let Ok(remote_socket) = TcpStream::connect(adrs).await else{
             // TODO
             // Return error message
             return ;
@@ -250,6 +256,83 @@ impl Socks5Proxy {
         }
 
     }
+
+    async fn cmd_bind_handler(
+        socket: &mut TcpStream,
+        req: Request,
+    ){
+
+        let Some(bind_addrs) = req.dst_socket_addr else{
+            // TODO
+            // Handle
+            return ;
+        };
+
+        // Bind tha adress 
+        info!("BIND PORT ADDRES IS : {:?}" , bind_addrs);
+        
+        let Ok(listener) = TcpListener::bind(bind_addrs).await else {
+            // TODO
+            // Handle
+            return ;
+        };
+
+        let Ok(local_addrs) = listener.local_addr() else {
+            // TODO
+            // Handle
+            return ;
+        };
+
+        // Return accept
+        let reply = Reply::new(ReplyType::Succeeded, req.atyp.clone(), req.dst_addr.clone(), req.dst_port);
+        Self::send_message(socket, &reply.to_bytes()).await;
+
+
+        // Accept connection
+        let Ok((remote_socket, remote_addr)) = listener.accept().await else{
+            // TODO
+            // Handle
+            return ;
+        };
+
+        let addrs = match remote_addr.ip() {
+            IpAddr::V4(ipv4) => {
+                ipv4.octets().to_vec()
+            },
+            IpAddr::V6(ipv6) => {
+                ipv6.octets().to_vec()
+            },
+        };
+
+
+        let reply = Reply::new(ReplyType::Succeeded, req.atyp.clone(), addrs, remote_addr.port());
+        Self::send_message(socket, &reply.to_bytes()).await;
+
+
+        let (mut src_read, mut src_write) = io::split(socket);
+        let (mut dest_read, mut dest_write) = io::split(remote_socket);
+
+
+        let copy_to_destination = async {
+            io::copy(&mut src_read, &mut dest_write).await
+        };
+    
+        let copy_to_source = async {
+            io::copy(&mut dest_read, &mut src_write).await
+        };
+
+        let result = tokio::join!(copy_to_destination, copy_to_source);
+
+        // Handle results if needed
+        if let (Err(e), _) | (_, Err(e)) = result {
+            error!("Error while proxying: {:?}", e);
+        }
+
+        
+    }
+
+
+
 
     fn parse_user_pass(buf: &[u8]) -> (String, String) {
         let username_length = buf[1] as usize;

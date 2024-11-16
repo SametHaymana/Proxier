@@ -356,6 +356,9 @@ impl Request {
     pub fn from_bytes(
         bytes: &[u8],
     ) -> Result<Self, String> {
+        info!("REQ ROW: {:?}", bytes);
+
+
         // Check if there are enough bytes to read
         if bytes.len() < 7 {
             return Err(
