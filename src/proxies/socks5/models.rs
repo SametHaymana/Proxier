@@ -358,7 +358,6 @@ impl Request {
     ) -> Result<Self, String> {
         info!("REQ ROW: {:?}", bytes);
 
-
         // Check if there are enough bytes to read
         if bytes.len() < 7 {
             return Err(
@@ -484,7 +483,7 @@ impl Request {
                         dst_port
                     );
 
-                    info!("ADDRS : {}", &addr );
+                    info!("ADDRS : {}", &addr);
                     match addr.to_socket_addrs() {
                         Ok(mut addrs) => {
                             if let Some(socket_addr) =
@@ -563,6 +562,159 @@ impl Reply {
         bytes.extend_from_slice(
             &self.bnd_port.to_be_bytes(),
         );
+        bytes
+    }
+}
+
+// UDP
+
+/// +----+------+------+----------+----------+----------+
+/// | RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+/// +----+------+------+----------+----------+----------+
+/// |  2  |  1   |  1   | Variable |    2     | Variable |
+/// +----+------+------+----------+----------+----------+
+#[derive(Debug)]
+pub struct UdpRequest {
+    pub reserved: u16,
+    pub frag: u8,
+    pub atyp: AddressType,
+    pub dst_addr: Vec<u8>,
+    pub dst_port: u16,
+    pub data: Vec<u8>, // UDP payload
+}
+
+impl UdpRequest {
+    /// Constructs a new `UdpRequest`.
+    pub fn new(
+        reserved: u16,
+        frag: u8,
+        atyp: AddressType,
+        dst_addr: Vec<u8>,
+        dst_port: u16,
+        data: Vec<u8>,
+    ) -> Self {
+        Self {
+            reserved,
+            frag,
+            atyp,
+            dst_addr,
+            dst_port,
+            data,
+        }
+    }
+
+    /// Serializes the `UdpRequest` into a byte array.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(
+            &self.reserved.to_be_bytes(),
+        );
+        bytes.push(self.frag);
+        bytes.push(self.atyp.to_byte());
+        bytes.extend_from_slice(&self.dst_addr);
+        bytes.extend_from_slice(
+            &self.dst_port.to_be_bytes(),
+        );
+        bytes.extend_from_slice(&self.data);
+        bytes
+    }
+
+    /// Parses a `UdpRequest` from a byte array.
+    pub fn from_bytes(
+        bytes: &[u8],
+    ) -> Result<Self, String> {
+        if bytes.len() < 7 {
+            return Err("Not enough bytes for UdpRequest"
+                .to_string());
+        }
+
+        // Read fixed fields
+        let reserved =
+            u16::from_be_bytes([bytes[0], bytes[1]]);
+        let frag = bytes[2];
+        let atyp = AddressType::from_byte(bytes[3])
+            .map_err(|_| {
+                "Invalid address type".to_string()
+            })?;
+
+        // Determine destination address length
+        let (dst_addr_length, addr_offset) = match atyp {
+            AddressType::IPv4 => (4, 4),
+            AddressType::DomainName => {
+                (bytes[4] as usize + 1, 5)
+            }
+            AddressType::IPv6 => (16, 4),
+        };
+
+        if bytes.len() < addr_offset + dst_addr_length + 2 {
+            return Err("Not enough bytes for destination address or port".to_string());
+        }
+
+        // Extract address and port
+        let dst_addr = bytes
+            [addr_offset..addr_offset + dst_addr_length]
+            .to_vec();
+        let dst_port = u16::from_be_bytes([
+            bytes[addr_offset + dst_addr_length],
+            bytes[addr_offset + dst_addr_length + 1],
+        ]);
+
+        // Extract data (UDP payload)
+        let data_offset = addr_offset + dst_addr_length + 2;
+        let data = bytes[data_offset..].to_vec();
+
+        Ok(Self {
+            reserved,
+            frag,
+            atyp,
+            dst_addr,
+            dst_port,
+            data,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct UdpReply {
+    pub reserved: u16,
+    pub frag: u8,
+    pub atyp: AddressType,
+    pub dst_addr: Vec<u8>,
+    pub dst_port: u16,
+    pub data: Vec<u8>, // UDP payload
+}
+
+impl UdpReply {
+    /// Constructs a new `UdpReply`.
+    pub fn new(
+        atyp: AddressType,
+        dst_addr: Vec<u8>,
+        dst_port: u16,
+        data: Vec<u8>,
+    ) -> Self {
+        Self {
+            reserved: 0x0000, // Always zero
+            frag: 0x00, // Default fragment (no fragmentation)
+            atyp,
+            dst_addr,
+            dst_port,
+            data,
+        }
+    }
+
+    /// Serializes the `UdpReply` into a byte array.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(
+            &self.reserved.to_be_bytes(),
+        );
+        bytes.push(self.frag);
+        bytes.push(self.atyp.to_byte());
+        bytes.extend_from_slice(&self.dst_addr);
+        bytes.extend_from_slice(
+            &self.dst_port.to_be_bytes(),
+        );
+        bytes.extend_from_slice(&self.data);
         bytes
     }
 }

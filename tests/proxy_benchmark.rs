@@ -11,7 +11,8 @@ const CONCURRENT_LIMIT: usize = 100; // Maximum number of concurrent requests
 // Run this function with `cargo test -- --nocapture` to see output
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn benchmark_socks5_proxy() {
-    let semaphore = Arc::new(Semaphore::new(CONCURRENT_LIMIT));
+    let semaphore =
+        Arc::new(Semaphore::new(CONCURRENT_LIMIT));
     let client = Client::builder()
         .proxy(reqwest::Proxy::all(SOCKS5_PROXY).unwrap())
         .build()
@@ -27,7 +28,8 @@ async fn benchmark_socks5_proxy() {
         let handle = tokio::spawn(async move {
             let permit = semaphore.acquire().await.unwrap(); // Acquire a permit
             let start = Instant::now();
-            let result = client.get(TARGET_URL).send().await;
+            let result =
+                client.get(TARGET_URL).send().await;
             drop(permit); // Release permit after request completes
 
             match result {
@@ -64,5 +66,8 @@ async fn benchmark_socks5_proxy() {
     // Output statistics
     println!("Total requests: {}", NUM_REQUESTS);
     println!("Successful requests: {}", success_count);
-    println!("Average response time: {:.2?}", avg_response_time);
+    println!(
+        "Average response time: {:.2?}",
+        avg_response_time
+    );
 }

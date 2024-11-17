@@ -2,43 +2,51 @@ mod constant;
 mod models;
 
 use std::{
+    collections::HashSet,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, RwLock},
+    str::FromStr,
+    sync::Arc,
 };
 
+use async_trait::async_trait;
 use constant::SOCKET5_VERSION;
 use models::{
-    AddressType, AuthMethods, AuthReply, AuthRequest, CommandType, Reply, ReplyType, Request
+    AuthMethods, AuthReply, AuthRequest, CommandType,
+    Reply, ReplyType, Request,
 };
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use parking_lot::RwLock;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    io::{self, AsyncReadExt, AsyncWriteExt},
+    runtime::Runtime,
+};
 use tracing::{error, info, instrument};
+use uuid::Uuid;
 
 use crate::models::users::User;
 
-use super::common::{ProxyError, Result};
+use super::{
+    common::{ProxyError, Result as ProxyResult},
+    proxy_manager::ProxyEx,
+};
 
 pub struct Socks5Proxy {
     // Port
     port: u16,
 
-    users: Arc<RwLock<Vec<User>>>,
+    avaliable_auth_methods: RwLock<Vec<u8>>,
+
+    avaliable_users: Arc<RwLock<HashSet<Arc<User>>>>,
 }
 
-impl Socks5Proxy {
-    pub fn new(port: u16) -> Self {
-        Self {
-            port,
-            users: Arc::new(RwLock::new(Vec::new())),
-        }
-    }
-
-    pub async fn start(&self) -> Result<()> {
+#[async_trait]
+impl ProxyEx for Socks5Proxy {
+    async fn start(&self) -> Result<(), String> {
         let addrs = format!("0.0.0.0:{}", self.port);
 
         let listener = TcpListener::bind(&addrs)
             .await
-            .map_err(ProxyError::IoError)?;
+            .map_err(|_e| _e.to_string())?;
 
         info!("Starting sock5 proxy on : {}", addrs);
 
@@ -46,8 +54,67 @@ impl Socks5Proxy {
             let (socket, addr) = listener
                 .accept()
                 .await
-                .map_err(ProxyError::IoError)?;
+                .map_err(|_e| _e.to_string())?;
             tokio::spawn(Self::handle_conn(socket, addr));
+        }
+    }
+
+    async fn set_avaliable_auth_methods(
+        &mut self,
+        methods: Vec<u8>,
+    ) {
+        let mut vec = self.avaliable_auth_methods.write();
+        *vec = methods;
+    }
+
+    async fn avaliable_auth_methods(&self) -> Vec<u8> {
+        self.avaliable_auth_methods.read().clone()
+    }
+
+    async fn avaliable_users(
+        &self,
+    ) -> Arc<RwLock<HashSet<Arc<User>>>> {
+        self.avaliable_users.clone()
+    }
+
+    async fn set_user(&mut self, user: Arc<User>) {
+        let mut users = self.avaliable_users.write();
+        users.insert(user.clone());
+    }
+
+    async fn remove_user(&mut self, user_id: &str) -> bool {
+        let user_id = match Uuid::from_str(user_id) {
+            Ok(id) => id,
+            Err(_) => return false,
+        };
+
+        let user = {
+            let users = self.avaliable_users.read();
+            users
+                .iter()
+                .find(|user| user.user_id == user_id)
+                .cloned()
+        };
+
+        if user.is_none() {
+            return false;
+        }
+
+        let mut users = self.avaliable_users.write();
+        users.remove(&user.unwrap());
+
+        true
+    }
+}
+
+impl Socks5Proxy {
+    pub fn new(port: u16) -> Self {
+        Self {
+            port,
+            avaliable_auth_methods: RwLock::new(Vec::new()),
+            avaliable_users: Arc::new(RwLock::new(
+                HashSet::new(),
+            )),
         }
     }
 
@@ -105,7 +172,7 @@ impl Socks5Proxy {
     async fn handle_conn(
         mut socket: TcpStream,
         addr: SocketAddr,
-    ) -> Result<()> {
+    ) -> ProxyResult<()> {
         let mut buf: [u8; 258] = [0; 258];
 
         Self::read_message(&mut socket, &mut buf).await;
@@ -123,7 +190,6 @@ impl Socks5Proxy {
 
         // Safe Unwrap
         let auth_request = auth_request.unwrap();
-
 
         // Proxy server must support GSPAPI auth
         // TODO
@@ -156,7 +222,6 @@ impl Socks5Proxy {
             .contains(&AuthMethods::NoAuth.to_byte())
         {
             info!("NO AUTH");
-            
         } else {
             Self::close_socket(&mut socket).await;
             return Ok(());
@@ -194,26 +259,28 @@ impl Socks5Proxy {
         // Safe Unwrap
         let req = req.unwrap();
 
-
         match req.cmd {
             CommandType::Connect => {
-
                 // Replay for accepting
-                let reply = Reply::new(ReplyType::Succeeded, req.atyp.clone(), req.dst_addr.clone(), req.dst_port);
-                
-                Self::send_message(socket, &reply.to_bytes()).await;
+                let reply = Reply::new(
+                    ReplyType::Succeeded,
+                    req.atyp.clone(),
+                    req.dst_addr.clone(),
+                    req.dst_port,
+                );
 
+                Self::send_message(
+                    socket,
+                    &reply.to_bytes(),
+                )
+                .await;
 
                 // Connect two stream
-                Self::cmd_connect_handler(socket, req).await;
-
-
+                Self::cmd_connect_handler(socket, req)
+                    .await;
             }
             CommandType::Bind => {
-
                 Self::cmd_bind_handler(socket, req).await;
-
-
             }
             CommandType::UdpAssociate => {}
         }
@@ -224,115 +291,131 @@ impl Socks5Proxy {
         socket: &mut TcpStream,
         req: Request,
     ) {
-
-        let Some(adrs) = req.dst_socket_addr else{
+        let Some(adrs) = req.dst_socket_addr else {
             Self::close_socket(socket).await;
-            return ;
+            return;
         };
 
-        let Ok(remote_socket) = TcpStream::connect(adrs).await else{
+        let Ok(remote_socket) =
+            TcpStream::connect(adrs).await
+        else {
             // TODO
             // Return error message
-            return ;
+            return;
         };
 
-        let (mut src_read, mut src_write) = io::split(socket);
-        let (mut dest_read, mut dest_write) = io::split(remote_socket);
-
+        let (mut src_read, mut src_write) =
+            io::split(socket);
+        let (mut dest_read, mut dest_write) =
+            io::split(remote_socket);
 
         let copy_to_destination = async {
             io::copy(&mut src_read, &mut dest_write).await
         };
-    
+
         let copy_to_source = async {
             io::copy(&mut dest_read, &mut src_write).await
         };
 
-        let result = tokio::join!(copy_to_destination, copy_to_source);
+        let result = tokio::join!(
+            copy_to_destination,
+            copy_to_source
+        );
 
         // Handle results if needed
         if let (Err(e), _) | (_, Err(e)) = result {
             error!("Error while proxying: {:?}", e);
         }
-
     }
 
     async fn cmd_bind_handler(
         socket: &mut TcpStream,
         req: Request,
-    ){
-
-        let Some(bind_addrs) = req.dst_socket_addr else{
+    ) {
+        let Some(bind_addrs) = req.dst_socket_addr else {
             // TODO
             // Handle
-            return ;
+            return;
         };
 
-        // Bind tha adress 
-        info!("BIND PORT ADDRES IS : {:?}" , bind_addrs);
-        
-        let Ok(listener) = TcpListener::bind(bind_addrs).await else {
+        // Bind tha adress
+        info!("BIND PORT ADDRES IS : {:?}", bind_addrs);
+
+        let Ok(listener) =
+            TcpListener::bind(bind_addrs).await
+        else {
             // TODO
             // Handle
-            return ;
+            return;
         };
 
         let Ok(local_addrs) = listener.local_addr() else {
             // TODO
             // Handle
-            return ;
+            return;
         };
 
         // Return accept
-        let reply = Reply::new(ReplyType::Succeeded, req.atyp.clone(), req.dst_addr.clone(), req.dst_port);
+        let reply = Reply::new(
+            ReplyType::Succeeded,
+            req.atyp.clone(),
+            req.dst_addr.clone(),
+            req.dst_port,
+        );
         Self::send_message(socket, &reply.to_bytes()).await;
 
-
         // Accept connection
-        let Ok((remote_socket, remote_addr)) = listener.accept().await else{
+        let Ok((remote_socket, remote_addr)) =
+            listener.accept().await
+        else {
             // TODO
             // Handle
-            return ;
+            return;
         };
 
         let addrs = match remote_addr.ip() {
-            IpAddr::V4(ipv4) => {
-                ipv4.octets().to_vec()
-            },
-            IpAddr::V6(ipv6) => {
-                ipv6.octets().to_vec()
-            },
+            IpAddr::V4(ipv4) => ipv4.octets().to_vec(),
+            IpAddr::V6(ipv6) => ipv6.octets().to_vec(),
         };
 
-
-        let reply = Reply::new(ReplyType::Succeeded, req.atyp.clone(), addrs, remote_addr.port());
+        let reply = Reply::new(
+            ReplyType::Succeeded,
+            req.atyp.clone(),
+            addrs,
+            remote_addr.port(),
+        );
         Self::send_message(socket, &reply.to_bytes()).await;
 
-
-        let (mut src_read, mut src_write) = io::split(socket);
-        let (mut dest_read, mut dest_write) = io::split(remote_socket);
-
+        let (mut src_read, mut src_write) =
+            io::split(socket);
+        let (mut dest_read, mut dest_write) =
+            io::split(remote_socket);
 
         let copy_to_destination = async {
             io::copy(&mut src_read, &mut dest_write).await
         };
-    
+
         let copy_to_source = async {
             io::copy(&mut dest_read, &mut src_write).await
         };
 
-        let result = tokio::join!(copy_to_destination, copy_to_source);
+        let result = tokio::join!(
+            copy_to_destination,
+            copy_to_source
+        );
 
         // Handle results if needed
         if let (Err(e), _) | (_, Err(e)) = result {
             error!("Error while proxying: {:?}", e);
         }
-
-        
     }
 
-
-
+    pub async fn cmd_udp_associate(
+        socket: &mut TcpStream,
+        req: Request,
+    ) {
+        // TODO
+    }
 
     fn parse_user_pass(buf: &[u8]) -> (String, String) {
         let username_length = buf[1] as usize;
