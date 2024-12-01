@@ -356,7 +356,6 @@ impl Request {
     pub fn from_bytes(
         bytes: &[u8],
     ) -> Result<Self, String> {
-        info!("REQ ROW: {:?}", bytes);
 
         // Check if there are enough bytes to read
         if bytes.len() < 7 {
@@ -483,7 +482,6 @@ impl Request {
                         dst_port
                     );
 
-                    info!("ADDRS : {}", &addr);
                     match addr.to_socket_addrs() {
                         Ok(mut addrs) => {
                             if let Some(socket_addr) =
