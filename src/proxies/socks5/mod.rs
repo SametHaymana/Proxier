@@ -44,6 +44,10 @@ pub struct Socks5Proxy {
     avaliable_auth_methods: Arc<RwLock<HashSet<u8>>>,
     avaliable_users: Arc<RwLock<HashSet<User>>>,
 
+
+    blocked_ippaddr: Arc<RwLock<HashSet<IpAddr>>>,
+
+
     max_bandwith: Arc<AtomicU64>,
     bandwith: Arc<AtomicU64>,
 }
@@ -83,6 +87,10 @@ impl ProxyEx for Socks5Proxy {
         Ok(())
     }
 
+    async fn avaliable_auth_methods(&self) -> HashSet<u8> {
+        self.avaliable_auth_methods.read().await.clone()
+    }
+
     async fn set_avaliable_auth_method(
         &self,
         methods: Vec<u8>,
@@ -105,10 +113,6 @@ impl ProxyEx for Socks5Proxy {
         methods.iter().for_each(|method| {
             set.remove(method);
         });
-    }
-
-    async fn avaliable_auth_methods(&self) -> HashSet<u8> {
-        self.avaliable_auth_methods.read().await.clone()
     }
 
     async fn avaliable_users(&self) -> HashSet<User> {
@@ -148,6 +152,25 @@ impl ProxyEx for Socks5Proxy {
     async fn set_max_bandwith(&self, max: u64) {
         self.max_bandwith.store(max, Ordering::Relaxed);
     }
+
+    fn current_bandwith(&self) -> u64{
+        self.bandwith().load(Ordering::Relaxed)
+    }
+
+    async fn block_ip_address(&self, addrs: &IpAddr){
+        let mut binding = self.blocked_ippaddr.write().await;
+        binding.insert(addrs.clone());
+    }
+
+    async fn get_blocked_address(&self) -> HashSet<IpAddr>{
+        let binding = self.blocked_ippaddr.read().await;
+        binding.clone()
+    }
+
+    async fn remove_blocked_address(&self, addrs: &IpAddr){
+        let mut binding = self.blocked_ippaddr.write().await;
+        binding.remove(&addrs);
+    }
 }
 
 impl Socks5Proxy {
@@ -160,6 +183,8 @@ impl Socks5Proxy {
             avaliable_users: Arc::new(RwLock::new(
                 HashSet::new(),
             )),
+
+            blocked_ippaddr: Arc::new(RwLock::new(HashSet::new())),
 
             max_bandwith: Arc::new(AtomicU64::new(0)),
 
@@ -377,6 +402,17 @@ async fn cmd_connect_handler(
         return;
     };
 
+
+    let proxy_read = proxy.read().await;
+
+    // Check blocked address
+    if proxy_read.blocked_ippaddr.read().await.contains(&adrs){
+        // TODO send message
+        return ;
+    }
+    
+
+
     let Ok(remote_socket) = TcpStream::connect(adrs).await
     else {
         // TODO
@@ -384,7 +420,6 @@ async fn cmd_connect_handler(
         return;
     };
 
-    let proxy_read = proxy.read().await;
 
     if !proxy_read.has_bandwith() {
         error!("Proxy has not have limit of bandwith");

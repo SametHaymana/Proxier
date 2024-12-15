@@ -8,7 +8,7 @@ use std::{
     fmt::Debug,
     io,
     net::IpAddr,
-    sync::Arc,
+    sync::{atomic::{AtomicU64, Ordering}, Arc},
 };
 
 use crate::models::users::{User, UserId};
@@ -47,6 +47,11 @@ pub trait ProxyEx: Send + Sync + Debug {
     async fn remove_user(&self, user_id: &str) -> bool;
 
     async fn set_max_bandwith(&self, max: u64);
+    fn current_bandwith(&self) -> u64;
+
+    async fn block_ip_address(&self, addrs: &IpAddr);
+    async fn get_blocked_address(&self) -> HashSet<IpAddr>;
+    async fn remove_blocked_address(&self, addrs: &IpAddr);
 
     // Analistic
 }
@@ -62,7 +67,7 @@ pub struct ProxyManager {
     blocked_ippaddr: Arc<RwLock<HashSet<IpAddr>>>,
 
     // Analistic
-    total_bytes_served: u128,
+    total_bytes_served: Arc<AtomicU64>,
 }
 
 impl ProxyManager {
@@ -74,7 +79,7 @@ impl ProxyManager {
             blocked_ippaddr: Arc::new(RwLock::new(
                 HashSet::new(),
             )),
-            total_bytes_served: 0,
+            total_bytes_served: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -297,6 +302,87 @@ impl ProxyManager {
         let (proxy, _) = entry;
 
         proxy.set_max_bandwith(max).await;
+    }
+
+
+    /// Get usaged bandwith of a proxy
+    pub async fn get_bandwith(        &self,
+        proxy_id: &String) -> u64{
+            let entry = match self.get_proxy(proxy_id) {
+                Some(entry) => entry,
+                None => {
+                    error!(
+                        "Proxy not found for ID: {}",
+                        proxy_id
+                    );
+                    return 0;
+                }
+            };
+    
+            let (proxy, _) = entry;
+    
+            proxy.current_bandwith()
+        }
+
+
+    async fn block_ip_address(&self, addrs: &IpAddr,proxy_id: &String){
+        let entry = match self.get_proxy(proxy_id) {
+            Some(entry) => entry,
+            None => {
+                error!(
+                    "Proxy not found for ID: {}",
+                    proxy_id
+                );
+                return;
+            }
+        };
+
+        let (proxy, _) = entry;
+
+        proxy.block_ip_address(addrs).await;
+    }
+    async fn get_blocked_address(&self, proxy_id: &String) -> HashSet<IpAddr>{
+        let entry = match self.get_proxy(proxy_id) {
+            Some(entry) => entry,
+            None => {
+                error!(
+                    "Proxy not found for ID: {}",
+                    proxy_id
+                );
+                return HashSet::new();
+            }
+        };
+
+        let (proxy, _) = entry;
+
+        proxy.get_blocked_address().await
+    }
+
+    async fn remove_blocked_address(&self, addrs: &IpAddr, proxy_id: &String){
+        let entry = match self.get_proxy(proxy_id) {
+            Some(entry) => entry,
+            None => {
+                error!(
+                    "Proxy not found for ID: {}",
+                    proxy_id
+                );
+                return;
+            }
+        };
+
+        let (proxy, _) = entry;
+
+        proxy.remove_blocked_address(addrs);
+
+    }
+    
+
+
+    fn update_bandwith_usage(&self) {
+        let total = self.avaliable_proxies.iter().fold(0, |t, p| {
+            t + p.0.current_bandwith() 
+        });
+        self.total_bytes_served.store(total, Ordering::Relaxed)
     }
 
     fn create_proxy_id() -> String {
